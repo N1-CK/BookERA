@@ -22,7 +22,8 @@ data class BookSearchResult(
     val author: String,
     val coverUrl: String?,
     val description: String?,
-    val downloadUrl: String
+    val downloadUrl: String,
+    val sourceId: String = ""
 )
 
 data class DownloadLink(

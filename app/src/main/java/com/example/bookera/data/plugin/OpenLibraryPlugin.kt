@@ -10,35 +10,14 @@ class OpenLibraryPlugin : DownloadPlugin {
     override val name = "Open Library"
     override val version = "1.0.0"
     override val author = "Open Library Team"
-    override val description = "Search and download books from Open Library"
+    override val description = "Каталог книг и обложек Open Library"
 
     override suspend fun canHandle(url: String): Boolean {
-        return url.contains("openlibrary.org") || url.contains("archive.org/download")
+        return false
     }
 
     override suspend fun download(url: String, destination: File, onProgress: (Float) -> Unit): Result<File> {
-        return try {
-            val response = ApiClient.bookApiService.downloadBook(url)
-            destination.outputStream().use { output ->
-                response.byteStream().use { input ->
-                    val buffer = ByteArray(8192)
-                    var bytesRead: Int
-                    var totalBytes = 0L
-                    val contentLength = response.contentLength()
-
-                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                        output.write(buffer, 0, bytesRead)
-                        totalBytes += bytesRead
-                        if (contentLength > 0) {
-                            onProgress(totalBytes.toFloat() / contentLength)
-                        }
-                    }
-                }
-            }
-            Result.success(destination)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
+        return Result.failure(UnsupportedOperationException("Open Library предоставляет только метаданные в этом приложении"))
     }
 
     override suspend fun search(query: String): Result<List<BookSearchResult>> {
@@ -51,7 +30,7 @@ class OpenLibraryPlugin : DownloadPlugin {
                     author = doc.authorName?.joinToString(", ") ?: "Unknown Author",
                     coverUrl = doc.getCoverUrl("M"),
                     description = doc.getDescriptionText(),
-                    downloadUrl = doc.getDownloadUrl() ?: ""
+                    downloadUrl = ""
                 )
             }
             Result.success(results)

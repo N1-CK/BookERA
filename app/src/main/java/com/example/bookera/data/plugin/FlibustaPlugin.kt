@@ -80,18 +80,9 @@ class FlibustaPlugin : DownloadPlugin {
                     .addHeader("Upgrade-Insecure-Requests", "1")
                     .build()
 
-                val response = okHttpClient.newCall(request).execute()
-                if (response.isSuccessful) {
-                    val body = response.body
-                    if (body != null) {
-                        body.string()
-                    } else {
-                        Log.e(TAG, "Response body is null")
-                        null
-                    }
-                } else {
-                    Log.e(TAG, "Failed to fetch HTML: ${response.code}")
-                    null
+                okHttpClient.newCall(request).execute().use { response ->
+                    if (response.isSuccessful) response.body?.string()
+                    else { Log.e(TAG, "Failed to fetch HTML: ${response.code}"); null }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error fetching HTML: ${e.message}", e)
@@ -172,9 +163,10 @@ class FlibustaPlugin : DownloadPlugin {
 
                 val results = mutableListOf<BookSearchResult>()
 
-                val bookItems = doc.select("ul li").filter { item ->
-                    item.select("a[href*=/b/]").isNotEmpty()
-                }
+                val bookItems = doc.select("a[href]")
+                    .filter { Regex("""^/b/\d+/?$""").matches(it.attr("href")) }
+                    .mapNotNull { it.closest("li") ?: it.closest("tr") ?: it.parent() }
+                    .distinct()
 
                 Log.d(
                     TAG,

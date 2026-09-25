@@ -1,7 +1,6 @@
 package com.example.bookera.data.local.repository
 
 import android.content.Context
-import com.example.bookera.data.file.ArchiveExtractor
 import com.example.bookera.data.local.dao.BookDao
 import com.example.bookera.data.model.Book
 import com.example.bookera.data.plugin.BookSearchResult
@@ -67,43 +66,47 @@ class BookRepository(
     // ============================================================
 
     suspend fun searchWithPlugins(
-        query: String
+        query: String,
+        enabledIds: Set<String>
     ): Result<List<BookSearchResult>> =
         withContext(Dispatchers.IO) {
 
             runCatching {
 
-                val results =
-                    pluginManager.searchAllPlugins(query)
-
-                results.forEach { result ->
-
-                    val id =
-                        result.id.toLongOrNull()
-                            ?: result.id.hashCode().toLong()
-
-                    val existing =
-                        bookDao.getBookById(id)
-
-                    if (existing == null) {
-
-                        val book =
-                            Book(
-                                id = id,
-                                title = result.title,
-                                author = result.author,
-                                description = result.description,
-                                coverUrl = result.coverUrl,
-                                downloadUrl = result.downloadUrl
-                            )
-
-                        bookDao.insertOrUpdate(book)
-                    }
-                }
-
-                results
+                pluginManager.searchAllPlugins(query, enabledIds)
             }
         }
+
+    suspend fun saveSearchResult(result: BookSearchResult): Long {
+        val bytes = java.security.MessageDigest.getInstance("SHA-256")
+            .digest((result.sourceId + ":" + result.id).toByteArray(Charsets.UTF_8))
+        val id = java.nio.ByteBuffer.wrap(bytes).long
+        if (bookDao.getBookById(id) == null) {
+            bookDao.insertOrUpdate(Book(
+                id = id, title = result.title, author = result.author,
+                description = result.description, coverUrl = result.coverUrl,
+                downloadUrl = result.downloadUrl
+            ))
+        }
+        return id
+    }
+
+    suspend fun deleteDownloadedFile(bookId: Long): Result<Unit> = withContext(Dispatchers.IO) {
+        runCatching {
+            val book = bookDao.getBookById(bookId) ?: error("Книга не найдена")
+            val booksDir = File(context.getExternalFilesDir(null), "books").canonicalFile
+            val bookFile = book.localFilePath?.let(::File)?.canonicalFile
+            if (bookFile != null) {
+                require(bookFile.parentFile == booksDir) { "Недопустимый путь файла" }
+                if (bookFile.exists() && !bookFile.delete()) error("Не удалось удалить файл")
+            }
+            File(booksDir, "book_${bookId}_extracted").deleteRecursively()
+            booksDir.listFiles()?.filter { it.isFile && it.name.startsWith("${bookId}_") }?.forEach {
+                if (!it.delete()) error("Не удалось удалить ${it.name}")
+            }
+            bookDao.insertOrUpdate(book.copy(localFilePath = null, isDownloaded = false))
+        }
+    }
 
 
     // ============================================================
@@ -200,6 +203,9 @@ class BookRepository(
 
             bookDao.insertOrUpdate(updated)
 
+            if (downloadedFile.canonicalPath != finalFile.canonicalPath) downloadedFile.delete()
+            File(downloadedFile.parentFile, "book_${bookId}_extracted").deleteRecursively()
+
             android.util.Log.d(
                 "BookRepository",
                 "Book saved successfully"
@@ -208,6 +214,10 @@ class BookRepository(
             Result.success(Unit)
 
         } catch (e: Exception) {
+
+            val booksDir = File(context.getExternalFilesDir(null), "books")
+            File(booksDir, fileName.replace(Regex("[^a-zA-Z0-9._-]"), "_")).delete()
+            File(booksDir, "book_${bookId}_extracted").deleteRecursively()
 
             android.util.Log.e(
                 "BookRepository",

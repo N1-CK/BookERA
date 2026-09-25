@@ -5,6 +5,8 @@ package com.example.bookera.data.reader.fb2
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +25,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Slider
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -32,6 +41,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.bookera.data.local.ReaderDatabase
@@ -184,9 +198,13 @@ private fun Fb2BookReader(
     val scope =
         rememberCoroutineScope()
 
-    var fontSize by remember {
-        mutableStateOf(18f)
-    }
+    val context = LocalContext.current
+    val prefs = remember(context) { context.getSharedPreferences("reader_appearance", android.content.Context.MODE_PRIVATE) }
+    var fontSize by remember { mutableStateOf(prefs.getFloat("size", 20f)) }
+    var palette by remember { mutableStateOf(prefs.getInt("palette", 0)) }
+    var showSettings by remember { mutableStateOf(false) }
+    val pageColor = when (palette) { 1 -> Color(0xFFF4EAD5); 2 -> Color(0xFF20242B); else -> Color(0xFFFCFBFF) }
+    val inkColor = if (palette == 2) Color(0xFFF0EEE8) else Color(0xFF22242A)
 
     var restored by remember {
         mutableStateOf(false)
@@ -315,6 +333,8 @@ private fun Fb2BookReader(
 
     Scaffold(
 
+        containerColor = pageColor,
+
         topBar = {
 
             TopAppBar(
@@ -328,6 +348,12 @@ private fun Fb2BookReader(
                             }
                                 .take(30)
                     )
+                },
+
+                colors = TopAppBarDefaults.topAppBarColors(containerColor = pageColor, titleContentColor = inkColor, navigationIconContentColor = inkColor, actionIconContentColor = inkColor),
+
+                actions = {
+                    TextButton(onClick = { showSettings = true }) { Text("aA", color = inkColor) }
                 },
 
                 navigationIcon = {
@@ -381,24 +407,21 @@ private fun Fb2BookReader(
 
         bottomBar = {
 
-            LinearProgressIndicator(
-                progress = {
-                    progress
-                },
-
-                modifier =
-                    Modifier.fillMaxWidth()
-            )
+            Column {
+                Text("${(progress * 100).toInt()}% прочитано", Modifier.padding(horizontal = 20.dp, vertical = 5.dp), color = inkColor, style = MaterialTheme.typography.labelSmall)
+                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
+            }
         }
 
     ) { paddingValues ->
 
-        LazyColumn(
+        CompositionLocalProvider(LocalContentColor provides inkColor) { LazyColumn(
             state = listState,
 
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
+                .background(pageColor)
                 .padding(
                     horizontal = 20.dp
                 )
@@ -422,10 +445,7 @@ private fun Fb2BookReader(
                             .typography
                             .titleMedium,
 
-                    color =
-                        MaterialTheme
-                            .colorScheme
-                            .onSurfaceVariant
+                    color = inkColor.copy(alpha = 0.7f)
                 )
 
                 Spacer(
@@ -442,8 +462,8 @@ private fun Fb2BookReader(
                     chapter =
                         book.chapters[index],
 
-                    fontSize =
-                        fontSize
+                    fontSize = fontSize,
+                    inkColor = inkColor
                 )
             }
 
@@ -454,14 +474,31 @@ private fun Fb2BookReader(
                         Modifier.height(80.dp)
                 )
             }
-        }
+        } }
     }
+    if (showSettings) AlertDialog(
+        onDismissRequest = { showSettings = false },
+        title = { Text("Оформление страницы") },
+        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Text("Размер шрифта: ${fontSize.toInt()}")
+            Slider(value = fontSize, onValueChange = { fontSize = it; prefs.edit().putFloat("size", it).apply() }, valueRange = 14f..32f)
+            Text("Цвет фона")
+            listOf("Светлый", "Сепия", "Тёмный").forEachIndexed { index, label ->
+                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
+                    RadioButton(selected = palette == index, onClick = { palette = index; prefs.edit().putInt("palette", index).apply() })
+                    Text(label)
+                }
+            }
+        } },
+        confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Готово") } }
+    )
 }
 
 @Composable
 private fun Fb2ChapterView(
     chapter: Fb2Chapter,
-    fontSize: Float
+    fontSize: Float,
+    inkColor: Color
 ) {
 
     Column(
@@ -519,6 +556,8 @@ private fun Fb2ChapterView(
                         fontSize =
                             fontSize.sp,
 
+                        fontFamily = FontFamily.Serif,
+
                         lineHeight =
                             (fontSize * 1.6f).sp,
 
@@ -560,10 +599,7 @@ private fun Fb2ChapterView(
                         lineHeight =
                             (fontSize * 1.5f).sp,
 
-                        color =
-                            MaterialTheme
-                                .colorScheme
-                                .onSurfaceVariant,
+                        color = inkColor.copy(alpha = 0.72f),
 
                         modifier =
                             Modifier.padding(
@@ -610,7 +646,8 @@ private fun Fb2ChapterView(
 
             Fb2ChapterView(
                 chapter = child,
-                fontSize = fontSize
+                fontSize = fontSize,
+                inkColor = inkColor
             )
         }
     }

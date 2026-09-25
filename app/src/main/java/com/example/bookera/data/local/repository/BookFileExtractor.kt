@@ -100,6 +100,7 @@ object BookFileExtractor {
         if (isZip(file)) {
 
             ZipFile(file).use { zip ->
+                require(zip.size() <= 2000) { "Archive has too many files" }
 
                 zip.entries().asSequence().forEach { entry ->
 
@@ -110,7 +111,12 @@ object BookFileExtractor {
                     val outputFile = File(
                         directory,
                         entry.name
-                    )
+                    ).canonicalFile
+
+                    require(outputFile.path.startsWith(directory.canonicalPath + File.separator)) {
+                        "Invalid archive entry path"
+                    }
+                    require(entry.size in 0..100_000_000L) { "Archive entry is too large" }
 
                     outputFile.parentFile?.mkdirs()
 
