@@ -1,0 +1,50 @@
+# Игнорируем всё, что генерируется
+*.iml
+.gradle
+/build
+/captures
+.externalNativeBuild
+.cxx
+
+# Локальные настройки
+local.properties
+
+# Системные файлы
+.DS_Store
+
+# Локальные данные приложения/БД
+*.db
+
+# --- ИСПРАВЛЕНИЕ: не игнорировать все jar, кроме wrapper ---
+*.jar
+!gradle/wrapper/gradle-wrapper.jar
+
+# --- ДОБАВЛЕНО: артефакты сборки ---
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+*.hprof
+
+# --- ДОБАВЛЕНО: секреты и подписи (раскомментируйте, если нужно) ---
+# *.jks
+# *.keystore
+# google-services.json
+
+# --- ДОБАВЛЕНО: Kotlin ---
+.kotlin/
+
+# --- ДОБАВЛЕНО: Логи ---
+*.log
+
+# --- ДОБАВЛЕНО: IDE (более безопасный вариант, чем весь .idea) ---
+.idea/workspace.xml
+.idea/tasks.xml
+.idea/assetWizardSettings.xml
+.idea/libraries
+.idea/caches
+.idea/modules.xml
+.idea/navEditor.xml
+
+# --- УБРАНО: *.xml (слишком широко), *.kts (нужны), *.properties (кроме local), *.webp (ресурсы) ---
