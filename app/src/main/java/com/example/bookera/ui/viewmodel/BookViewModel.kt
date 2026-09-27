@@ -2,6 +2,9 @@
 package com.example.bookera.ui.viewmodel
 
 import androidx.lifecycle.ViewModel
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import androidx.lifecycle.viewModelScope
 import com.example.bookera.data.model.Book
 import com.example.bookera.data.local.repository.BookRepository
@@ -14,6 +17,8 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import androidx.compose.runtime.Composable
 import com.example.bookera.data.reader.ReaderManager
 import com.example.bookera.data.reader.ReaderPlugin
@@ -36,6 +41,7 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
     val availablePlugins: StateFlow<List<DownloadPlugin>> = _availablePlugins.asStateFlow()
 
     private val readerManager by lazy { ReaderManager() }
+    private var searchJob: Job? = null
 
     fun getReaderForFile(filePath: String): ReaderPlugin? {
         return readerManager.getReaderForFile(filePath)
@@ -55,6 +61,9 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
     }
 
     // Книги из локальной БД с фильтрацией по поиску
+    val allBooks: StateFlow<List<Book>> = repository.getAllBooks()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
     val books: StateFlow<List<Book>> = combine(
         repository.getAllBooks(),
         _searchQuery
@@ -79,6 +88,7 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
     init {
         // Просто загружаем плагины - книги уже есть в БД
         loadPlugins()
+        viewModelScope.launch { repository.enrichMissingCovers() }
     }
 
     private fun loadPlugins() {
@@ -91,8 +101,10 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
 
     fun searchBooks(query: String) {
         _searchQuery.value = query
+        searchJob?.cancel()
         if (query.isNotBlank()) {
-            viewModelScope.launch {
+            searchJob = viewModelScope.launch {
+                delay(450)
                 _isLoading.value = true
                 _error.value = null
                 try {
@@ -109,7 +121,16 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
             }
         } else {
             _searchResults.value = emptyList()
+            _isLoading.value = false
         }
+    }
+
+    fun importBook(uri: Uri, onComplete: (Result<Book>) -> Unit) {
+        viewModelScope.launch { onComplete(repository.importBook(uri)) }
+    }
+
+    fun removeBook(book: Book) {
+        viewModelScope.launch { repository.removeFromLibrary(book) }
     }
 
     fun toggleFavorite(bookId: Long, isFavorite: Boolean) {
@@ -152,7 +173,7 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
                             url = url,
                             fileName = fileName,
                             bookId = bookId,
-                            onProgress = onProgress
+                            onProgress = { value -> Handler(Looper.getMainLooper()).post { onProgress(value) } }
                         )
 
                     if (result.isSuccess) {

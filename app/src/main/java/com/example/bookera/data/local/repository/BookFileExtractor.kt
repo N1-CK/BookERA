@@ -22,6 +22,14 @@ object BookFileExtractor {
             "Input file: ${downloadedFile.absolutePath}, size=${downloadedFile.length()}"
         )
 
+        // EPUB is itself a ZIP container; it must never be unpacked as an FB2 archive.
+        if (downloadedFile.extension.equals("epub", true) && isZip(downloadedFile)) return downloadedFile
+        if (downloadedFile.extension.equals("pdf", true) && downloadedFile.inputStream().use {
+                val magic = ByteArray(5)
+                it.read(magic) == 5 && String(magic, Charsets.US_ASCII) == "%PDF-"
+            }) return downloadedFile
+        if (downloadedFile.extension.equals("txt", true) && downloadedFile.length() > 0) return downloadedFile
+
         // Проверяем ZIP по сигнатуре
         if (isZip(downloadedFile)) {
 
@@ -111,6 +119,11 @@ object BookFileExtractor {
                         directory,
                         entry.name
                     )
+
+                    require(outputFile.canonicalPath.startsWith(directory.canonicalPath + File.separator)) {
+                        "Unsafe archive path"
+                    }
+                    require(entry.size < 80L * 1024 * 1024 || entry.size == -1L) { "Archive entry too large" }
 
                     outputFile.parentFile?.mkdirs()
 
