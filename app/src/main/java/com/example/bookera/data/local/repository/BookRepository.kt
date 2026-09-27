@@ -12,6 +12,8 @@ import com.example.bookera.data.plugin.DownloadPlugin
 import com.example.bookera.data.plugin.PluginManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
@@ -26,6 +28,9 @@ class BookRepository(
     private val bookDao: BookDao,
     private val context: Context
 ) {
+
+    private val coverSlots = Semaphore(2)
+    private val attemptedCovers = mutableSetOf<Long>()
 
     private val pluginManager by lazy {
         PluginManager(context)
@@ -168,8 +173,21 @@ class BookRepository(
     /** Enrich a small batch, then persist successful matches; never crawl the cover service. */
     suspend fun enrichMissingCovers() = withContext(Dispatchers.IO) {
         bookDao.getAllBooks().first().filter { it.coverUrl.isNullOrBlank() }.take(12).forEach { book ->
+            resolveCover(book)
+        }
+    }
+
+    suspend fun resolveCover(book: Book) = withContext(Dispatchers.IO) {
+        if (!book.coverUrl.isNullOrBlank()) return@withContext
+        val shouldLookup = synchronized(attemptedCovers) {
+            if (attemptedCovers.size >= 40) false else attemptedCovers.add(book.id)
+        }
+        if (!shouldLookup) return@withContext
+        coverSlots.withPermit {
             val cover = lookupCover(book.title, book.author)
-            if (cover != null) bookDao.insertOrUpdate(book.copy(coverUrl = cover))
+            if (cover != null) bookDao.getBookById(book.id)?.let { current ->
+                if (current.coverUrl.isNullOrBlank()) bookDao.insertOrUpdate(current.copy(coverUrl = cover))
+            }
         }
     }
 

@@ -111,7 +111,8 @@ fun BookListScreen(viewModel: BookViewModel, navController: NavHostController, m
                                 contentAlignment = Alignment.CenterEnd) { Text("Избранное  •  Удалить", color = Color.White) }
                         }) {
                             BookCard(book, onClick = { navController.navigate(Routes.bookDetail(book.id)) },
-                                onFavorite = { viewModel.toggleFavorite(book.id, !book.isFavorite) })
+                                onFavorite = { viewModel.toggleFavorite(book.id, !book.isFavorite) },
+                                onMissingCover = { viewModel.resolveCover(book) })
                         }
                     }
                 }
@@ -127,7 +128,9 @@ fun BookListScreen(viewModel: BookViewModel, navController: NavHostController, m
 }
 
 @Composable
-private fun BookCard(book: Book, onClick: () -> Unit, onFavorite: () -> Unit) {
+private fun BookCard(book: Book, onClick: () -> Unit, onFavorite: () -> Unit,
+    onMissingCover: () -> Unit = {}) {
+    LaunchedEffect(book.id, book.coverUrl) { if (book.coverUrl.isNullOrBlank()) onMissingCover() }
     Card(Modifier.fillMaxWidth().animateContentSize().clickable(onClick = onClick), shape = RoundedCornerShape(22.dp),
         colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(2.dp)) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {

@@ -129,6 +129,10 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
         viewModelScope.launch { onComplete(repository.importBook(uri)) }
     }
 
+    fun resolveCover(book: Book) {
+        viewModelScope.launch { repository.resolveCover(book) }
+    }
+
     fun removeBook(book: Book) {
         viewModelScope.launch { repository.removeFromLibrary(book) }
     }

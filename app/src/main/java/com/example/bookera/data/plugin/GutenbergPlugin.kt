@@ -25,7 +25,7 @@ class GutenbergPlugin : DownloadPlugin {
 
     override suspend fun search(query: String): Result<List<BookSearchResult>> = withContext(Dispatchers.IO) {
         runCatching {
-            val url = "https://gutendex.com/books?search=${URLEncoder.encode(query, "UTF-8")}" 
+            val url = "https://gutendex.com/books?search=${URLEncoder.encode(query, "UTF-8")}"
             client.newCall(Request.Builder().url(url).build()).execute().use { response ->
                 check(response.isSuccessful) { "Gutendex HTTP ${response.code}" }
                 val root = JsonParser.parseString(response.body?.string().orEmpty()).asJsonObject
