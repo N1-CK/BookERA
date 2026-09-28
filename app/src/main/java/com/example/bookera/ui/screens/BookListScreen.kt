@@ -1,47 +1,28 @@
-// BookListScreen.kt - исправленная версия
 package com.example.bookera.ui.screens
 
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.animateContentSize
+import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
-import androidx.compose.material.icons.filled.List
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.outlined.FavoriteBorder
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
-import androidx.compose.material3.Text
-import androidx.compose.material3.TextField
-import androidx.compose.material3.TopAppBar
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -51,210 +32,130 @@ import com.example.bookera.data.model.Book
 import com.example.bookera.ui.navigation.Routes
 import com.example.bookera.ui.viewmodel.BookViewModel
 
+private val navy = Color(0xFF172837)
+private val mist = Color(0xFFF5F6F5)
+private val accent = Color(0xFFBB7958)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun BookListScreen(
-    viewModel: BookViewModel,
-    navController: NavHostController,
-    modifier: Modifier = Modifier
-) {
+fun BookListScreen(viewModel: BookViewModel, navController: NavHostController, modifier: Modifier = Modifier) {
     val books by viewModel.books.collectAsState()
-    val favoriteBooks by viewModel.favoriteBooks.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    val searchQuery by viewModel.searchQuery.collectAsState()
-
-    var showFavoritesOnly by remember { mutableStateOf(false) }
-
-    val displayedBooks = if (showFavoritesOnly) favoriteBooks else books
-
-    Scaffold(
-        modifier = modifier,
-        topBar = {
-            TopAppBar(
-                title = { Text("BookERA") },
-                actions = {
-                    IconButton(onClick = { showFavoritesOnly = !showFavoritesOnly }) {
-                        Icon(
-                            imageVector = if (showFavoritesOnly) Icons.Filled.Favorite
-                            else Icons.Filled.List,
-                            contentDescription = if (showFavoritesOnly) "Show All"
-                            else "Show Favorites"
-                        )
+    val allBooks by viewModel.allBooks.collectAsState()
+    val favorites by viewModel.favoriteBooks.collectAsState()
+    val loading by viewModel.isLoading.collectAsState()
+    val query by viewModel.searchQuery.collectAsState()
+    val context = LocalContext.current
+    var tab by remember { mutableIntStateOf(0) }
+    var filter by remember { mutableIntStateOf(0) }
+    var pendingDeletion by remember { mutableStateOf<Book?>(null) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        uri?.let { viewModel.importBook(it) { result ->
+            Toast.makeText(context, result.fold({ "Книга добавлена" }, { it.message ?: "Не удалось открыть книгу" }), Toast.LENGTH_LONG).show()
+        } }
+    }
+    val importAction = { picker.launch(arrayOf("application/epub+zip", "application/pdf", "text/plain", "application/xml", "application/octet-stream", "*/*")) }
+    val visible = when (filter) {
+        1 -> books.filter { it.isDownloaded }
+        2 -> favorites
+        else -> books
+    }
+    Scaffold(modifier = modifier, containerColor = mist,
+        bottomBar = {
+            NavigationBar(containerColor = Color.White) {
+                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Text("▤") }, label = { Text("Библиотека") })
+                NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Text("◉") }, label = { Text("Профиль") })
+            }
+        }, floatingActionButton = {
+            if (tab == 0) ExtendedFloatingActionButton(onClick = importAction, containerColor = navy,
+                contentColor = Color.White, text = { Text("Добавить книгу") }, icon = { Text("＋") })
+        }
+    ) { padding ->
+        AnimatedContent(targetState = tab, label = "section", modifier = Modifier.padding(padding)) { destination ->
+            if (destination == 1) ProfileScreen(books = allBooks, favorites = favorites.size, onImport = importAction,
+                onOpenLibrary = { tab = 0 })
+            else Column(Modifier.fillMaxSize()) {
+                Column(Modifier.fillMaxWidth().background(navy).padding(start = 22.dp, end = 22.dp, top = 26.dp, bottom = 22.dp)) {
+                    Text("BOOKERA  ·  ЛИЧНАЯ БИБЛИОТЕКА", style = MaterialTheme.typography.labelMedium, color = Color(0xFFD5BDB0))
+                    Spacer(Modifier.height(9.dp))
+                    Text("Книги, к которым\nхочется вернуться", style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.SemiBold, color = Color.White, lineHeight = androidx.compose.ui.unit.TextUnit.Unspecified)
+                    Spacer(Modifier.height(20.dp))
+                    OutlinedTextField(value = query, onValueChange = viewModel::searchBooks, modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text("Название или автор") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true,
+                        colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = Color.White, unfocusedContainerColor = Color.White,
+                            focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent),
+                        shape = RoundedCornerShape(18.dp))
+                }
+                Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Все", "Мои книги", "Избранное").forEachIndexed { index, label ->
+                        FilterChip(selected = filter == index, onClick = { filter = index }, label = { Text(label) },
+                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = navy, selectedLabelColor = Color.White))
                     }
                 }
-            )
-        }
-    ) { paddingValues ->
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(paddingValues)
-        ) {
-            // Search bar
-            TextField(
-                value = searchQuery,
-                onValueChange = { viewModel.searchBooks(it) },
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 8.dp),
-                placeholder = { Text("Search by title or author") },
-                leadingIcon = {
-                    Icon(Icons.Filled.Search, contentDescription = "Search")
-                },
-                singleLine = true
-            )
-
-            // Content
-            Box(modifier = Modifier.fillMaxSize()) {
-                when {
-                    isLoading -> {
-                        CircularProgressIndicator(
-                            modifier = Modifier.align(Alignment.Center)
-                        )
-                    }
-
-                    displayedBooks.isEmpty() -> {
-                        Text(
-                            text = if (searchQuery.isNotBlank()) "No books found"
-                            else if (showFavoritesOnly) "No favorite books yet"
-                            else "No books available.",
-                            style = MaterialTheme.typography.bodyLarge,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.align(Alignment.Center)
-                        )
-                    }
-
-                    else -> {
-                        LazyColumn(
-                            contentPadding = PaddingValues(16.dp),
-                            verticalArrangement = Arrangement.spacedBy(12.dp)
-                        ) {
-                            items(
-                                items = displayedBooks,
-                                key = { it.id }
-                            ) { book ->
-                                BookCard(
-                                    book = book,
-                                    onClick = {
-                                        navController.navigate(Routes.bookDetail(book.id))
-                                    },
-                                    onToggleFavorite = { isFav ->
-                                        viewModel.toggleFavorite(book.id, isFav)
-                                    }
-                                )
+                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = accent)
+                if (visible.isEmpty()) Box(Modifier.fillMaxSize().padding(30.dp), contentAlignment = Alignment.Center) {
+                    Text(if (query.isBlank()) "Добавьте книгу или найдите её в каталоге" else "Совпадений пока нет",
+                        color = navy, style = MaterialTheme.typography.titleMedium)
+                } else LazyColumn(contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 95.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                    items(visible, key = { it.id }) { book ->
+                        SwipeToDismissBox(state = rememberSwipeToDismissBoxState(confirmValueChange = { direction ->
+                            when (direction) {
+                                SwipeToDismissBoxValue.StartToEnd -> { viewModel.toggleFavorite(book.id, !book.isFavorite); false }
+                                SwipeToDismissBoxValue.EndToStart -> { pendingDeletion = book; false }
+                                else -> false
                             }
+                        }), backgroundContent = {
+                            Box(Modifier.fillMaxSize().clip(RoundedCornerShape(22.dp))
+                                .background(if (book.isFavorite) accent else navy).padding(20.dp),
+                                contentAlignment = Alignment.CenterEnd) { Text("Избранное  •  Удалить", color = Color.White) }
+                        }) {
+                            BookCard(book, onClick = { navController.navigate(Routes.bookDetail(book.id)) },
+                                onFavorite = { viewModel.toggleFavorite(book.id, !book.isFavorite) },
+                                onMissingCover = { viewModel.resolveCover(book) })
                         }
                     }
                 }
             }
         }
     }
+    pendingDeletion?.let { book ->
+        AlertDialog(onDismissRequest = { pendingDeletion = null }, title = { Text("Удалить книгу?") },
+            text = { Text("${book.title} будет удалена из библиотеки. Импортированный файл также удалится.") },
+            confirmButton = { TextButton(onClick = { viewModel.removeBook(book); pendingDeletion = null }) { Text("Удалить") } },
+            dismissButton = { TextButton(onClick = { pendingDeletion = null }) { Text("Отмена") } })
+    }
 }
 
 @Composable
-private fun BookCard(
-    book: Book,
-    onClick: () -> Unit,
-    onToggleFavorite: (Boolean) -> Unit,
-    modifier: Modifier = Modifier
-) {
-    Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
-    ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(12.dp)
-        ) {
-            // Cover image
-            AsyncImage(
-                model = book.coverUrl,
-                contentDescription = "Cover of ${book.title}",
-                modifier = Modifier
-                    .size(width = 80.dp, height = 120.dp)
-                    .clip(MaterialTheme.shapes.small),
-                contentScale = ContentScale.Crop,
-                error = androidx.compose.ui.res.painterResource(android.R.drawable.ic_menu_gallery)
-            )
-
-            Spacer(modifier = Modifier.width(12.dp))
-
-            // Book info
-            Column(
-                modifier = Modifier.weight(1f),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(
-                    text = book.title,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Spacer(modifier = Modifier.height(4.dp))
-
-                Text(
-                    text = book.author,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
-
-                Spacer(modifier = Modifier.height(8.dp))
-
-                // Rating stars
-                RatingStars(rating = book.rating)
+private fun BookCard(book: Book, onClick: () -> Unit, onFavorite: () -> Unit,
+    onMissingCover: () -> Unit = {}) {
+    LaunchedEffect(book.id, book.coverUrl) { if (book.coverUrl.isNullOrBlank()) onMissingCover() }
+    Card(Modifier.fillMaxWidth().animateContentSize().clickable(onClick = onClick), shape = RoundedCornerShape(22.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.White), elevation = CardDefaults.cardElevation(2.dp)) {
+        Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            CoverArtwork(book, Modifier.size(86.dp, 120.dp))
+            Spacer(Modifier.width(16.dp))
+            Column(Modifier.weight(1f)) {
+                Text(book.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
+                    color = navy, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                Spacer(Modifier.height(7.dp))
+                Text(book.author, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF69727B), maxLines = 1)
+                Spacer(Modifier.height(13.dp))
+                Text(if (book.isDownloaded) "В библиотеке · Читать" else "Каталог · Подробнее",
+                    style = MaterialTheme.typography.labelSmall, color = accent)
             }
-
-            // Favorite button
-            IconButton(
-                onClick = { onToggleFavorite(!book.isFavorite) },
-                modifier = Modifier.align(Alignment.Top)
-            ) {
-                Icon(
-                    imageVector = if (book.isFavorite) Icons.Filled.Favorite
-                    else Icons.Outlined.FavoriteBorder,
-                    contentDescription = if (book.isFavorite) "Remove from favorites"
-                    else "Add to favorites",
-                    tint = if (book.isFavorite) MaterialTheme.colorScheme.error
-                    else MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
+            IconButton(onClick = onFavorite) { Icon(if (book.isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
+                "Избранное", tint = accent) }
         }
     }
 }
 
 @Composable
-private fun RatingStars(
-    rating: Float,
-    modifier: Modifier = Modifier
-) {
-    Row(modifier = modifier) {
-        repeat(5) { index ->
-            val starFraction = (rating - index).coerceIn(0f, 1f)
-            val tint = when {
-                starFraction >= 1f -> MaterialTheme.colorScheme.primary
-                starFraction > 0f -> MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)
-                else -> MaterialTheme.colorScheme.surfaceVariant
-            }
-            Text(
-                text = "★",
-                style = MaterialTheme.typography.bodySmall,
-                color = tint
-            )
-        }
-        if (rating > 0f) {
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = String.format("%.1f", rating),
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-        }
+fun CoverArtwork(book: Book, modifier: Modifier = Modifier) {
+    Box(modifier.clip(RoundedCornerShape(13.dp)).background(Color(0xFFB7C4C5)), contentAlignment = Alignment.Center) {
+        Text(book.title.take(1).uppercase(), color = navy, style = MaterialTheme.typography.headlineLarge)
+        if (!book.coverUrl.isNullOrBlank()) AsyncImage(model = book.coverUrl, contentDescription = "Обложка ${book.title}",
+            modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
     }
 }

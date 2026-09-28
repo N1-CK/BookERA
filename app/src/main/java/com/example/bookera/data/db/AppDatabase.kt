@@ -28,9 +28,6 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "books_database"
                 )
-                    // Загружаем предзаполненную базу из assets
-                    .createFromAsset("databases/books.db")
-                    .createFromAsset("databases/books (1).db")
                     .fallbackToDestructiveMigration()
                     .build()
                 INSTANCE = instance

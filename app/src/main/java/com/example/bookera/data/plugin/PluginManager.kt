@@ -4,6 +4,11 @@ package com.example.bookera.data.plugin
 import android.content.Context
 import android.util.Log
 import java.io.File
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withTimeoutOrNull
 
 class PluginManager(private val context: Context) {
 
@@ -23,22 +28,14 @@ class PluginManager(private val context: Context) {
 
     fun getAllPlugins(): List<DownloadPlugin> = plugins.values.toList()
 
-    suspend fun searchAllPlugins(query: String): List<BookSearchResult> {
-        val results = mutableListOf<BookSearchResult>()
-        plugins.values.forEach { plugin ->
-            try {
-                val result = plugin.search(query)
-                result.onSuccess { books ->
-                    results.addAll(books)
-                    Log.d(TAG, "Plugin ${plugin.name} found ${books.size} books")
-                }.onFailure { error ->
-                    Log.e(TAG, "Plugin ${plugin.name} search failed: ${error.message}")
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "Plugin ${plugin.name} error: ${e.message}")
-            }
-        }
-        return results
+    suspend fun searchAllPlugins(query: String): List<BookSearchResult> = coroutineScope {
+        plugins.values.map { plugin -> async(Dispatchers.IO) {
+            withTimeoutOrNull(8_000L) {
+                runCatching { plugin.search(query).getOrThrow() }
+                    .onFailure { Log.e(TAG, "${plugin.name}: ${it.message}") }
+                    .getOrDefault(emptyList()).map { it.copy(pluginId = plugin.id) }
+            }.orEmpty()
+        } }.awaitAll().flatten()
     }
 
     suspend fun downloadWithPlugin(
@@ -61,6 +58,7 @@ class PluginManager(private val context: Context) {
         // Регистрируем плагины
         registerPlugin(OpenLibraryPlugin())
         registerPlugin(FlibustaPlugin())
+        registerPlugin(GutenbergPlugin())
 
         // TODO: Добавить другие плагины (OPDS, CoolLib, и т.д.)
 

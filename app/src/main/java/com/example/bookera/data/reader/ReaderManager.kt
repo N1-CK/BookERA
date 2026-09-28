@@ -30,6 +30,9 @@ class ReaderManager {
         registerReader(
             Fb2ReaderPlugin()
         )
+        registerReader(EpubReaderPlugin())
+        registerReader(PdfReaderPlugin())
+        registerReader(TxtReaderPlugin())
     }
 
     fun registerReader(

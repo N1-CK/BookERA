@@ -10,7 +10,7 @@ class OpenLibraryPlugin : DownloadPlugin {
     override val name = "Open Library"
     override val version = "1.0.0"
     override val author = "Open Library Team"
-    override val description = "Search and download books from Open Library"
+    override val description = "Book metadata and covers"
 
     override suspend fun canHandle(url: String): Boolean {
         return url.contains("openlibrary.org") || url.contains("archive.org/download")
@@ -51,7 +51,7 @@ class OpenLibraryPlugin : DownloadPlugin {
                     author = doc.authorName?.joinToString(", ") ?: "Unknown Author",
                     coverUrl = doc.getCoverUrl("M"),
                     description = doc.getDescriptionText(),
-                    downloadUrl = doc.getDownloadUrl() ?: ""
+                    downloadUrl = ""
                 )
             }
             Result.success(results)

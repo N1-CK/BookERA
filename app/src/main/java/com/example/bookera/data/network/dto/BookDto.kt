@@ -35,17 +35,12 @@ data class BookDoc(
     }
 
     fun getCoverUrl(size: String = "M"): String? =
-        coverId?.let { "https://covers.openlibrary.org/b/id/$it-$size.jpg" }
+        coverId?.let { "https://covers.openlibrary.org/b/id/$it-$size.jpg?default=false" }
+            ?: isbn?.firstOrNull()?.let { "https://covers.openlibrary.org/b/isbn/$it-$size.jpg?default=false" }
 
     fun getDownloadUrl(): String? {
-        // Сначала пробуем получить PDF из Internet Archive
-        ia?.firstOrNull()?.let { iaId ->
-            return "https://archive.org/download/$iaId/${iaId}.pdf"
-        }
-        // Fallback на ISBN
-        return isbn?.firstOrNull()?.let {
-            "https://archive.org/download/isbn_$it/isbn_$it.pdf"
-        }
+        // Metadata identifiers do not prove that a downloadable PDF exists.
+        return null
     }
 
     fun getOLWorkKey(): String = key.replace("/works/", "")

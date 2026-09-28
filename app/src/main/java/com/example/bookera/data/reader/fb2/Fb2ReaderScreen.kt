@@ -2,6 +2,8 @@
 
 package com.example.bookera.data.reader.fb2
 
+import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -34,13 +36,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.bookera.data.local.ReaderDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import com.example.bookera.data.local.ReadingProgressEntity
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.collectLatest
 
@@ -103,7 +103,7 @@ fun Fb2ReaderScreen(
             Fb2BookReader(
                 book = book!!,
                 bookId = bookId,
-                database = ReaderDatabase.getInstance(context),
+                context = context,
                 onBack = onBack
             )
         }
@@ -170,11 +170,47 @@ private fun ErrorReaderScreen(
     }
 }
 
+private fun readFb2Progress(context: Context, bookId: Long): Pair<Int, Int>? {
+    val prefs = context.getSharedPreferences("fb2_reader_progress", Context.MODE_PRIVATE)
+    val key = "book_$bookId"
+    if (prefs.contains("${key}_index")) {
+        return prefs.getInt("${key}_index", 0) to prefs.getInt("${key}_offset", 0)
+    }
+
+    // Preserve the position for installations that used the old Room database.
+    val oldDb = context.getDatabasePath("bookera_reader.db")
+    if (!oldDb.exists()) return null
+    val previous = runCatching {
+        SQLiteDatabase.openDatabase(oldDb.absolutePath, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+            var position: Pair<Int, Int>? = null
+            db.query(
+                "reading_progress",
+                arrayOf("firstVisibleItemIndex", "firstVisibleItemOffset"),
+                "bookId = ?", arrayOf(bookId.toString()), null, null, null
+            ).use { cursor ->
+                if (cursor.moveToFirst()) position = cursor.getInt(0) to cursor.getInt(1)
+            }
+            position
+        }
+    }.getOrNull()
+    previous?.let { saveFb2Progress(context, bookId, it.first, it.second) }
+    return previous
+}
+
+private fun saveFb2Progress(context: Context, bookId: Long, index: Int, offset: Int) {
+    val key = "book_$bookId"
+    context.getSharedPreferences("fb2_reader_progress", Context.MODE_PRIVATE)
+        .edit()
+        .putInt("${key}_index", index)
+        .putInt("${key}_offset", offset)
+        .commit()
+}
+
 @Composable
 private fun Fb2BookReader(
     book: Fb2Book,
     bookId: Long,
-    database: ReaderDatabase,
+    context: Context,
     onBack: () -> Unit
 ) {
 
@@ -223,13 +259,9 @@ private fun Fb2BookReader(
      */
     LaunchedEffect(bookId) {
 
-        val saved =
-            withContext(Dispatchers.IO) {
-
-                database
-                    .readingProgressDao()
-                    .getProgress(bookId)
-            }
+        val saved = withContext(Dispatchers.IO) {
+            readFb2Progress(context, bookId)
+        }
 
         if (saved != null) {
 
@@ -238,7 +270,7 @@ private fun Fb2BookReader(
                     .coerceAtLeast(0)
 
             val safeIndex =
-                saved.firstVisibleItemIndex
+                saved.first
                     .coerceIn(
                         0,
                         maxIndex
@@ -247,7 +279,7 @@ private fun Fb2BookReader(
             listState.scrollToItem(
                 index = safeIndex,
                 scrollOffset =
-                    saved.firstVisibleItemOffset
+                    saved.second
             )
         }
 
@@ -283,32 +315,8 @@ private fun Fb2BookReader(
             val offset =
                 listState.firstVisibleItemScrollOffset
 
-            val currentProgress =
-                progress
-
             withContext(Dispatchers.IO) {
-
-                database
-                    .readingProgressDao()
-                    .saveProgress(
-
-                        ReadingProgressEntity(
-
-                            bookId = bookId,
-
-                            firstVisibleItemIndex =
-                                index,
-
-                            firstVisibleItemOffset =
-                                offset,
-
-                            progress =
-                                currentProgress,
-
-                            updatedAt =
-                                System.currentTimeMillis()
-                        )
-                    )
+                saveFb2Progress(context, bookId, index, offset)
             }
         }
     }
@@ -341,25 +349,12 @@ private fun Fb2BookReader(
                                     Dispatchers.IO
                                 ) {
 
-                                    database
-                                        .readingProgressDao()
-                                        .saveProgress(
-
-                                            ReadingProgressEntity(
-                                                bookId = bookId,
-
-                                                firstVisibleItemIndex =
-                                                    listState.firstVisibleItemIndex,
-
-                                                firstVisibleItemOffset =
-                                                    listState.firstVisibleItemScrollOffset,
-
-                                                progress = progress,
-
-                                                updatedAt =
-                                                    System.currentTimeMillis()
-                                            )
-                                        )
+                                    saveFb2Progress(
+                                        context,
+                                        bookId,
+                                        listState.firstVisibleItemIndex,
+                                        listState.firstVisibleItemScrollOffset
+                                    )
                                 }
 
                                 onBack()
