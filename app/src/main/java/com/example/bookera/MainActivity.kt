@@ -23,8 +23,13 @@ class MainActivity : ComponentActivity() {
         val database = AppModule.provideDatabase(applicationContext)
         val dao = AppModule.provideBookDao(database)
         val repository = AppModule.provideBookRepository(dao, applicationContext)
-        val viewModel = AppModule.provideBookViewModel(repository, applicationContext)
+        val viewModel = AppModule.provideBookViewModel(repository)
 
+
+        val pluginsDir = File(filesDir, "plugins")
+        if (!pluginsDir.exists()) {
+            pluginsDir.mkdirs()
+        }
 
         setContent {
             BookERATheme {

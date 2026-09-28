@@ -1,4 +1,4 @@
-package com.example.bookera.data.local
+package com.example.bookera.data.local.reader
 
 import android.content.Context
 import androidx.room.Database

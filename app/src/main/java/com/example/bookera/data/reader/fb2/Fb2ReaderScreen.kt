@@ -2,11 +2,11 @@
 
 package com.example.bookera.data.reader.fb2
 
+import android.content.Context
+import android.database.sqlite.SQLiteDatabase
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -25,13 +25,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
-import androidx.compose.material3.TopAppBarDefaults
-import androidx.compose.material3.TextButton
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Slider
-import androidx.compose.material3.Button
-import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
@@ -41,20 +34,13 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.material3.LocalContentColor
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.bookera.data.local.ReaderDatabase
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
-import com.example.bookera.data.local.ReadingProgressEntity
 import androidx.compose.runtime.snapshotFlow
 import kotlinx.coroutines.flow.collectLatest
 
@@ -117,7 +103,7 @@ fun Fb2ReaderScreen(
             Fb2BookReader(
                 book = book!!,
                 bookId = bookId,
-                database = ReaderDatabase.getInstance(context),
+                context = context,
                 onBack = onBack
             )
         }
@@ -184,11 +170,47 @@ private fun ErrorReaderScreen(
     }
 }
 
+private fun readFb2Progress(context: Context, bookId: Long): Pair<Int, Int>? {
+    val prefs = context.getSharedPreferences("fb2_reader_progress", Context.MODE_PRIVATE)
+    val key = "book_$bookId"
+    if (prefs.contains("${key}_index")) {
+        return prefs.getInt("${key}_index", 0) to prefs.getInt("${key}_offset", 0)
+    }
+
+    // Preserve the position for installations that used the old Room database.
+    val oldDb = context.getDatabasePath("bookera_reader.db")
+    if (!oldDb.exists()) return null
+    val previous = runCatching {
+        SQLiteDatabase.openDatabase(oldDb.absolutePath, null, SQLiteDatabase.OPEN_READONLY).use { db ->
+            var position: Pair<Int, Int>? = null
+            db.query(
+                "reading_progress",
+                arrayOf("firstVisibleItemIndex", "firstVisibleItemOffset"),
+                "bookId = ?", arrayOf(bookId.toString()), null, null, null
+            ).use { cursor ->
+                if (cursor.moveToFirst()) position = cursor.getInt(0) to cursor.getInt(1)
+            }
+            position
+        }
+    }.getOrNull()
+    previous?.let { saveFb2Progress(context, bookId, it.first, it.second) }
+    return previous
+}
+
+private fun saveFb2Progress(context: Context, bookId: Long, index: Int, offset: Int) {
+    val key = "book_$bookId"
+    context.getSharedPreferences("fb2_reader_progress", Context.MODE_PRIVATE)
+        .edit()
+        .putInt("${key}_index", index)
+        .putInt("${key}_offset", offset)
+        .commit()
+}
+
 @Composable
 private fun Fb2BookReader(
     book: Fb2Book,
     bookId: Long,
-    database: ReaderDatabase,
+    context: Context,
     onBack: () -> Unit
 ) {
 
@@ -198,13 +220,9 @@ private fun Fb2BookReader(
     val scope =
         rememberCoroutineScope()
 
-    val context = LocalContext.current
-    val prefs = remember(context) { context.getSharedPreferences("reader_appearance", android.content.Context.MODE_PRIVATE) }
-    var fontSize by remember { mutableStateOf(prefs.getFloat("size", 20f)) }
-    var palette by remember { mutableStateOf(prefs.getInt("palette", 0)) }
-    var showSettings by remember { mutableStateOf(false) }
-    val pageColor = when (palette) { 1 -> Color(0xFFF4EAD5); 2 -> Color(0xFF20242B); else -> Color(0xFFFCFBFF) }
-    val inkColor = if (palette == 2) Color(0xFFF0EEE8) else Color(0xFF22242A)
+    var fontSize by remember {
+        mutableStateOf(18f)
+    }
 
     var restored by remember {
         mutableStateOf(false)
@@ -241,13 +259,9 @@ private fun Fb2BookReader(
      */
     LaunchedEffect(bookId) {
 
-        val saved =
-            withContext(Dispatchers.IO) {
-
-                database
-                    .readingProgressDao()
-                    .getProgress(bookId)
-            }
+        val saved = withContext(Dispatchers.IO) {
+            readFb2Progress(context, bookId)
+        }
 
         if (saved != null) {
 
@@ -256,7 +270,7 @@ private fun Fb2BookReader(
                     .coerceAtLeast(0)
 
             val safeIndex =
-                saved.firstVisibleItemIndex
+                saved.first
                     .coerceIn(
                         0,
                         maxIndex
@@ -265,7 +279,7 @@ private fun Fb2BookReader(
             listState.scrollToItem(
                 index = safeIndex,
                 scrollOffset =
-                    saved.firstVisibleItemOffset
+                    saved.second
             )
         }
 
@@ -301,39 +315,13 @@ private fun Fb2BookReader(
             val offset =
                 listState.firstVisibleItemScrollOffset
 
-            val currentProgress =
-                progress
-
             withContext(Dispatchers.IO) {
-
-                database
-                    .readingProgressDao()
-                    .saveProgress(
-
-                        ReadingProgressEntity(
-
-                            bookId = bookId,
-
-                            firstVisibleItemIndex =
-                                index,
-
-                            firstVisibleItemOffset =
-                                offset,
-
-                            progress =
-                                currentProgress,
-
-                            updatedAt =
-                                System.currentTimeMillis()
-                        )
-                    )
+                saveFb2Progress(context, bookId, index, offset)
             }
         }
     }
 
     Scaffold(
-
-        containerColor = pageColor,
 
         topBar = {
 
@@ -350,12 +338,6 @@ private fun Fb2BookReader(
                     )
                 },
 
-                colors = TopAppBarDefaults.topAppBarColors(containerColor = pageColor, titleContentColor = inkColor, navigationIconContentColor = inkColor, actionIconContentColor = inkColor),
-
-                actions = {
-                    TextButton(onClick = { showSettings = true }) { Text("aA", color = inkColor) }
-                },
-
                 navigationIcon = {
 
                     IconButton(
@@ -367,25 +349,12 @@ private fun Fb2BookReader(
                                     Dispatchers.IO
                                 ) {
 
-                                    database
-                                        .readingProgressDao()
-                                        .saveProgress(
-
-                                            ReadingProgressEntity(
-                                                bookId = bookId,
-
-                                                firstVisibleItemIndex =
-                                                    listState.firstVisibleItemIndex,
-
-                                                firstVisibleItemOffset =
-                                                    listState.firstVisibleItemScrollOffset,
-
-                                                progress = progress,
-
-                                                updatedAt =
-                                                    System.currentTimeMillis()
-                                            )
-                                        )
+                                    saveFb2Progress(
+                                        context,
+                                        bookId,
+                                        listState.firstVisibleItemIndex,
+                                        listState.firstVisibleItemScrollOffset
+                                    )
                                 }
 
                                 onBack()
@@ -407,21 +376,24 @@ private fun Fb2BookReader(
 
         bottomBar = {
 
-            Column {
-                Text("${(progress * 100).toInt()}% прочитано", Modifier.padding(horizontal = 20.dp, vertical = 5.dp), color = inkColor, style = MaterialTheme.typography.labelSmall)
-                LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth())
-            }
+            LinearProgressIndicator(
+                progress = {
+                    progress
+                },
+
+                modifier =
+                    Modifier.fillMaxWidth()
+            )
         }
 
     ) { paddingValues ->
 
-        CompositionLocalProvider(LocalContentColor provides inkColor) { LazyColumn(
+        LazyColumn(
             state = listState,
 
             modifier = Modifier
                 .fillMaxSize()
                 .padding(paddingValues)
-                .background(pageColor)
                 .padding(
                     horizontal = 20.dp
                 )
@@ -445,7 +417,10 @@ private fun Fb2BookReader(
                             .typography
                             .titleMedium,
 
-                    color = inkColor.copy(alpha = 0.7f)
+                    color =
+                        MaterialTheme
+                            .colorScheme
+                            .onSurfaceVariant
                 )
 
                 Spacer(
@@ -462,8 +437,8 @@ private fun Fb2BookReader(
                     chapter =
                         book.chapters[index],
 
-                    fontSize = fontSize,
-                    inkColor = inkColor
+                    fontSize =
+                        fontSize
                 )
             }
 
@@ -474,31 +449,14 @@ private fun Fb2BookReader(
                         Modifier.height(80.dp)
                 )
             }
-        } }
+        }
     }
-    if (showSettings) AlertDialog(
-        onDismissRequest = { showSettings = false },
-        title = { Text("Оформление страницы") },
-        text = { Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-            Text("Размер шрифта: ${fontSize.toInt()}")
-            Slider(value = fontSize, onValueChange = { fontSize = it; prefs.edit().putFloat("size", it).apply() }, valueRange = 14f..32f)
-            Text("Цвет фона")
-            listOf("Светлый", "Сепия", "Тёмный").forEachIndexed { index, label ->
-                Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                    RadioButton(selected = palette == index, onClick = { palette = index; prefs.edit().putInt("palette", index).apply() })
-                    Text(label)
-                }
-            }
-        } },
-        confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Готово") } }
-    )
 }
 
 @Composable
 private fun Fb2ChapterView(
     chapter: Fb2Chapter,
-    fontSize: Float,
-    inkColor: Color
+    fontSize: Float
 ) {
 
     Column(
@@ -556,8 +514,6 @@ private fun Fb2ChapterView(
                         fontSize =
                             fontSize.sp,
 
-                        fontFamily = FontFamily.Serif,
-
                         lineHeight =
                             (fontSize * 1.6f).sp,
 
@@ -599,7 +555,10 @@ private fun Fb2ChapterView(
                         lineHeight =
                             (fontSize * 1.5f).sp,
 
-                        color = inkColor.copy(alpha = 0.72f),
+                        color =
+                            MaterialTheme
+                                .colorScheme
+                                .onSurfaceVariant,
 
                         modifier =
                             Modifier.padding(
@@ -646,8 +605,7 @@ private fun Fb2ChapterView(
 
             Fb2ChapterView(
                 chapter = child,
-                fontSize = fontSize,
-                inkColor = inkColor
+                fontSize = fontSize
             )
         }
     }

@@ -23,7 +23,7 @@ data class BookSearchResult(
     val coverUrl: String?,
     val description: String?,
     val downloadUrl: String,
-    val sourceId: String = ""
+    val pluginId: String = ""
 )
 
 data class DownloadLink(

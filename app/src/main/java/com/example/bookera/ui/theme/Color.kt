@@ -2,10 +2,6 @@ package com.example.bookera.ui.theme
 
 import androidx.compose.ui.graphics.Color
 
-val Purple80 = Color(0xFFD0BCFF)
-val PurpleGrey80 = Color(0xFFCCC2DC)
-val Pink80 = Color(0xFFEFB8C8)
-
-val Purple40 = Color(0xFF0757B8)
-val PurpleGrey40 = Color(0xFF607087)
-val Pink40 = Color(0xFF238CCB)
+val Ink = Color(0xFF172837)
+val Paper = Color(0xFFF5F6F5)
+val Copper = Color(0xFFBB7958)

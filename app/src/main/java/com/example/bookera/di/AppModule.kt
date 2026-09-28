@@ -4,7 +4,6 @@ import android.content.Context
 import com.example.bookera.data.local.dao.BookDao
 import com.example.bookera.data.db.AppDatabase
 import com.example.bookera.data.local.repository.BookRepository
-import com.example.bookera.data.local.LocalSettings
 import com.example.bookera.ui.viewmodel.BookViewModel
 
 object AppModule {
@@ -21,7 +20,7 @@ object AppModule {
         return BookRepository(dao, context)
     }
 
-    fun provideBookViewModel(repository: BookRepository, context: Context): BookViewModel {
-        return BookViewModel(repository, LocalSettings(context))
+    fun provideBookViewModel(repository: BookRepository): BookViewModel {
+        return BookViewModel(repository)
     }
 }

@@ -1,4 +1,4 @@
-package com.example.bookera.data.local
+package com.example.bookera.data.local.reader
 
 import androidx.room.Dao
 import androidx.room.Insert
