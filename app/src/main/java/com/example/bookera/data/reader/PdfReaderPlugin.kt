@@ -4,12 +4,15 @@ import android.graphics.Bitmap
 import android.graphics.Color as AndroidColor
 import android.graphics.pdf.PdfRenderer
 import android.os.ParcelFileDescriptor
+import com.example.bookera.data.db.AppDatabase
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.*
@@ -20,6 +23,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -54,17 +58,27 @@ class PdfReaderPlugin : ReaderPlugin {
         }
         val pager = rememberPagerState(initialPage = prefs.getInt("page_$bookId", 0).coerceIn(0, count - 1), pageCount = { count })
         val scope = rememberCoroutineScope()
+        var bookmarks by remember(bookId) { mutableStateOf(prefs.getStringSet("pdf_bookmark_$bookId", emptySet()).orEmpty().mapNotNull { it.toIntOrNull() }.toSet()) }
+        var showBookmarks by remember { mutableStateOf(false) }
+        var showJump by remember { mutableStateOf(false) }
+        var finished by remember(bookId) { mutableStateOf(false) }
+        var scale by remember { mutableFloatStateOf(1f) }
+        var offset by remember { mutableStateOf(Offset.Zero) }
+        val toolbarInk = Color(0xFF172837)
+        LaunchedEffect(pager.currentPage) { scale = 1f; offset = Offset.Zero }
         LaunchedEffect(pager.currentPage) { prefs.edit().putInt("page_$bookId", pager.currentPage).apply() }
         Column(Modifier.fillMaxSize().background(Color(0xFFDFE2E5))) {
             Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-                TextButton(onClick = onBack) { Text("← Назад") }
+                TextButton(onClick = onBack) { Text("← Назад", color = toolbarInk) }
                 Spacer(Modifier.weight(1f))
-                Text("${pager.currentPage + 1} / $count")
+                TextButton(onClick = { showBookmarks = true }) { Text("Метки", color = toolbarInk) }
+                TextButton(onClick = {
+                    bookmarks = if (pager.currentPage in bookmarks) bookmarks - pager.currentPage else bookmarks + pager.currentPage
+                    prefs.edit().putStringSet("pdf_bookmark_$bookId", bookmarks.map { it.toString() }.toSet()).apply()
+                }) { Text(if (pager.currentPage in bookmarks) "★" else "☆", color = toolbarInk) }
             }
-            HorizontalPager(state = pager, modifier = Modifier.weight(1f)) { index ->
+            HorizontalPager(state = pager, modifier = Modifier.weight(1f), userScrollEnabled = scale <= 1.01f) { index ->
                 var bitmap by remember(filePath, index) { mutableStateOf<Bitmap?>(null) }
-                var scale by remember(index) { mutableFloatStateOf(1f) }
-                var offset by remember(index) { mutableStateOf(Offset.Zero) }
                 val transform = rememberTransformableState { zoom, pan, _ ->
                     scale = (scale * zoom).coerceIn(1f, 4f)
                     offset = if (scale == 1f) Offset.Zero else offset + pan
@@ -88,13 +102,43 @@ class PdfReaderPlugin : ReaderPlugin {
                 }
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     bitmap?.let { Image(it.asImageBitmap(), "Страница ${index + 1}", Modifier.fillMaxSize()
+                        .pointerInput(index) { detectTapGestures(onDoubleTap = { scale = if (scale > 1f) 1f else 2f; offset = Offset.Zero }) }
                         .transformable(transform).graphicsLayer(scaleX = scale, scaleY = scale,
                             translationX = offset.x, translationY = offset.y), contentScale = ContentScale.Fit) }
                         ?: CircularProgressIndicator()
                 }
             }
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = { scope.launch { pager.animateScrollToPage((pager.currentPage - 1).coerceAtLeast(0)) } }) { Text("←", color = toolbarInk) }
+                Spacer(Modifier.weight(1f))
+                TextButton(onClick = { showJump = true }) { Text("${pager.currentPage + 1} / $count", color = toolbarInk) }
+                Spacer(Modifier.weight(1f))
+                if (pager.currentPage == count - 1) TextButton(onClick = {
+                    scope.launch(Dispatchers.IO) { AppDatabase.getDatabase(context).bookDao()
+                        .setRead(bookId, true, System.currentTimeMillis()) }
+                    finished = true
+                }) { Text(if (finished) "✓" else "Готово", color = toolbarInk) }
+                else TextButton(onClick = { scope.launch { pager.animateScrollToPage(pager.currentPage + 1) } }) { Text("→", color = toolbarInk) }
+            }
             Slider(value = pager.currentPage.toFloat(), onValueChange = { scope.launch { pager.scrollToPage(it.toInt().coerceIn(0, count - 1)) } },
-                valueRange = 0f..(count - 1).coerceAtLeast(1).toFloat(), modifier = Modifier.padding(horizontal = 20.dp))
+                valueRange = 0f..(count - 1).coerceAtLeast(1).toFloat(), modifier = Modifier.padding(horizontal = 20.dp),
+                colors = SliderDefaults.colors(thumbColor = toolbarInk, activeTrackColor = toolbarInk))
+        }
+        if (showBookmarks) AlertDialog(onDismissRequest = { showBookmarks = false }, title = { Text("Закладки PDF") },
+            text = { Column(Modifier.heightIn(max = 350.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
+                if (bookmarks.isEmpty()) Text("Закладок пока нет")
+                bookmarks.sorted().forEach { page ->
+                    TextButton(onClick = { scope.launch { pager.scrollToPage(page.coerceIn(0, count - 1)) }; showBookmarks = false }) {
+                        Text("Страница ${page + 1}")
+                    }
+                }
+            } }, confirmButton = { TextButton(onClick = { showBookmarks = false }) { Text("Закрыть") } })
+        if (showJump) {
+            var target by remember { mutableFloatStateOf(pager.currentPage.toFloat()) }
+            AlertDialog(onDismissRequest = { showJump = false }, title = { Text("Перейти к странице") },
+                text = { Column { Text("${target.toInt() + 1} из $count")
+                    Slider(target, { target = it }, valueRange = 0f..(count - 1).coerceAtLeast(1).toFloat()) } },
+                confirmButton = { TextButton(onClick = { scope.launch { pager.scrollToPage(target.toInt().coerceIn(0, count - 1)) }; showJump = false }) { Text("Перейти") } })
         }
     }
 }

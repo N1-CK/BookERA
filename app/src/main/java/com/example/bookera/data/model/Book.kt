@@ -1,6 +1,7 @@
 package com.example.bookera.data.model
 
 import androidx.room.Entity
+import androidx.room.ColumnInfo
 import androidx.room.PrimaryKey
 
 @Entity(tableName = "books")
@@ -30,5 +31,7 @@ data class Book(
     val publishDate: String? = null,
     val isbn: String? = null,
     val editionCount: Int = 0,
-    val lastUpdated: Long = System.currentTimeMillis()
+    val lastUpdated: Long = System.currentTimeMillis(),
+    @ColumnInfo(defaultValue = "0") val isRead: Boolean = false,
+    val finishedAt: Long? = null
 )

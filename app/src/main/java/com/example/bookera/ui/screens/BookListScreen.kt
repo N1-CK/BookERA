@@ -7,6 +7,8 @@ import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -57,22 +59,23 @@ fun BookListScreen(viewModel: BookViewModel, navController: NavHostController, m
     val visible = when (filter) {
         1 -> books.filter { it.isDownloaded }
         2 -> favorites
+        3 -> books.filter { it.isRead }
         else -> books
     }
     Scaffold(modifier = modifier, containerColor = mist,
         bottomBar = {
             NavigationBar(containerColor = Color.White) {
-                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Text("▤") }, label = { Text("Библиотека") })
-                NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Text("◉") }, label = { Text("Профиль") })
+                val navColors = NavigationBarItemDefaults.colors(selectedIconColor = navy, selectedTextColor = navy,
+                    unselectedIconColor = Color(0xFF46545E), unselectedTextColor = Color(0xFF46545E), indicatorColor = mist)
+                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Text("▤") }, label = { Text("Библиотека") }, colors = navColors)
+                NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Text("◉") }, label = { Text("Профиль") }, colors = navColors)
             }
-        }, floatingActionButton = {
-            if (tab == 0) ExtendedFloatingActionButton(onClick = importAction, containerColor = navy,
-                contentColor = Color.White, text = { Text("Добавить книгу") }, icon = { Text("＋") })
         }
     ) { padding ->
         AnimatedContent(targetState = tab, label = "section", modifier = Modifier.padding(padding)) { destination ->
             if (destination == 1) ProfileScreen(books = allBooks, favorites = favorites.size, onImport = importAction,
-                onOpenLibrary = { tab = 0 })
+                onOpenLibrary = { tab = 0 }, onOpenBook = { navController.navigate(Routes.bookDetail(it)) },
+                onSetRead = viewModel::setRead)
             else Column(Modifier.fillMaxSize()) {
                 Column(Modifier.fillMaxWidth().background(navy).padding(start = 22.dp, end = 22.dp, top = 26.dp, bottom = 22.dp)) {
                     Text("BOOKERA  ·  ЛИЧНАЯ БИБЛИОТЕКА", style = MaterialTheme.typography.labelMedium, color = Color(0xFFD5BDB0))
@@ -83,20 +86,24 @@ fun BookListScreen(viewModel: BookViewModel, navController: NavHostController, m
                     OutlinedTextField(value = query, onValueChange = viewModel::searchBooks, modifier = Modifier.fillMaxWidth(),
                         placeholder = { Text("Название или автор") }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true,
                         colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = Color.White, unfocusedContainerColor = Color.White,
-                            focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent),
+                            focusedBorderColor = Color.Transparent, unfocusedBorderColor = Color.Transparent,
+                            focusedTextColor = navy, unfocusedTextColor = navy, cursorColor = navy,
+                            focusedPlaceholderColor = Color(0xFF46545E), unfocusedPlaceholderColor = Color(0xFF46545E),
+                            focusedLeadingIconColor = navy, unfocusedLeadingIconColor = navy),
                         shape = RoundedCornerShape(18.dp))
                 }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp, vertical = 13.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("Все", "Мои книги", "Избранное").forEachIndexed { index, label ->
+                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 13.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    listOf("Все", "Мои книги", "Избранное", "Прочитано").forEachIndexed { index, label ->
                         FilterChip(selected = filter == index, onClick = { filter = index }, label = { Text(label) },
-                            colors = FilterChipDefaults.filterChipColors(selectedContainerColor = navy, selectedLabelColor = Color.White))
+                            colors = FilterChipDefaults.filterChipColors(containerColor = Color.White, labelColor = navy,
+                                selectedContainerColor = navy, selectedLabelColor = Color.White))
                     }
                 }
                 if (loading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = accent)
                 if (visible.isEmpty()) Box(Modifier.fillMaxSize().padding(30.dp), contentAlignment = Alignment.Center) {
-                    Text(if (query.isBlank()) "Добавьте книгу или найдите её в каталоге" else "Совпадений пока нет",
+                    Text(if (query.isBlank() && filter == 3) "Прочитанные книги появятся здесь" else if (query.isBlank()) "Откройте профиль, чтобы добавить книгу, или найдите её в каталоге" else "Совпадений пока нет",
                         color = navy, style = MaterialTheme.typography.titleMedium)
-                } else LazyColumn(contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 95.dp),
+                } else LazyColumn(contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 24.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)) {
                     items(visible, key = { it.id }) { book ->
                         SwipeToDismissBox(state = rememberSwipeToDismissBoxState(confirmValueChange = { direction ->
@@ -142,8 +149,8 @@ private fun BookCard(book: Book, onClick: () -> Unit, onFavorite: () -> Unit,
                 Spacer(Modifier.height(7.dp))
                 Text(book.author, style = MaterialTheme.typography.bodyMedium, color = Color(0xFF69727B), maxLines = 1)
                 Spacer(Modifier.height(13.dp))
-                Text(if (book.isDownloaded) "В библиотеке · Читать" else "Каталог · Подробнее",
-                    style = MaterialTheme.typography.labelSmall, color = accent)
+                Text(if (book.isRead) "✓ Прочитано" else if (book.isDownloaded) "В библиотеке · Читать" else "Каталог · Подробнее",
+                    style = MaterialTheme.typography.labelSmall, color = Color(0xFF90543A))
             }
             IconButton(onClick = onFavorite) { Icon(if (book.isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
                 "Избранное", tint = accent) }

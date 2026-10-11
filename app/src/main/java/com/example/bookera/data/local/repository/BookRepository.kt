@@ -73,6 +73,9 @@ class BookRepository(
     ) =
         bookDao.setFavorite(bookId, isFavorite)
 
+    suspend fun setRead(bookId: Long, read: Boolean) =
+        bookDao.setRead(bookId, read, if (read) System.currentTimeMillis() else null)
+
     suspend fun delete(book: Book) =
         bookDao.delete(book)
 

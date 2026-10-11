@@ -143,6 +143,10 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
         }
     }
 
+    fun setRead(bookId: Long, read: Boolean) {
+        viewModelScope.launch { repository.setRead(bookId, read) }
+    }
+
     fun updateRating(bookId: Long, rating: Float) {
         viewModelScope.launch {
             repository.updateRating(bookId, rating)

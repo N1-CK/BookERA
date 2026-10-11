@@ -71,7 +71,18 @@ fun BookDetailScreen(bookId: Long, viewModel: BookViewModel, onNavigateBack: () 
                 Text("Моя оценка")
                 (1..5).forEach { star -> Text("★", Modifier.clickable {
                     viewModel.updateRating(current.id, star.toFloat()); book = current.copy(rating = star.toFloat())
-                }.padding(3.dp), color = if (current.rating >= star) Color(0xFFBB7958) else Color.LightGray) }
+                }.padding(3.dp), color = if (current.rating >= star) Color(0xFF90543A) else MaterialTheme.colorScheme.onSurfaceVariant) }
+            }
+            Spacer(Modifier.height(12.dp))
+            OutlinedButton(onClick = {
+                viewModel.setRead(current.id, !current.isRead)
+                book = current.copy(isRead = !current.isRead, finishedAt = if (current.isRead) null else System.currentTimeMillis())
+            }, modifier = Modifier.fillMaxWidth()) {
+                Text(if (current.isRead) "✓ Прочитано · отменить отметку" else "Отметить как прочитанную")
+            }
+            current.finishedAt?.takeIf { current.isRead }?.let {
+                Text("Завершено: ${java.text.DateFormat.getDateInstance().format(java.util.Date(it))}",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
             Spacer(Modifier.height(16.dp))
             if (current.isDownloaded) Button(onClick = { onReadBook(current.id) }, modifier = Modifier.fillMaxWidth()) { Text("Читать") }
