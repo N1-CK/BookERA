@@ -8,6 +8,7 @@ import okhttp3.Request
 import java.io.File
 import java.net.URLEncoder
 import java.util.concurrent.TimeUnit
+import com.example.bookera.data.network.awaitResponse
 
 /** Gutendex indexes Project Gutenberg's freely accessible editions. No API key. */
 class GutenbergPlugin : DownloadPlugin {
@@ -26,7 +27,7 @@ class GutenbergPlugin : DownloadPlugin {
     override suspend fun search(query: String): Result<List<BookSearchResult>> = withContext(Dispatchers.IO) {
         runCatching {
             val url = "https://gutendex.com/books?search=${URLEncoder.encode(query, "UTF-8")}"
-            client.newCall(Request.Builder().url(url).build()).execute().use { response ->
+            client.newCall(Request.Builder().url(url).build()).awaitResponse().use { response ->
                 check(response.isSuccessful) { "Gutendex HTTP ${response.code}" }
                 val root = JsonParser.parseString(response.body?.string().orEmpty()).asJsonObject
                 root.getAsJsonArray("results").mapNotNull { element ->
@@ -49,7 +50,7 @@ class GutenbergPlugin : DownloadPlugin {
         withContext(Dispatchers.IO) {
             runCatching {
                 require(canHandle(url)) { "Unexpected download host" }
-                client.newCall(Request.Builder().url(url).build()).execute().use { response ->
+                client.newCall(Request.Builder().url(url).build()).awaitResponse().use { response ->
                     check(response.isSuccessful) { "Download HTTP ${response.code}" }
                     check(!response.header("Content-Type").orEmpty().contains("text/html")) { "Book file unavailable" }
                     val body = response.body ?: error("Empty download")

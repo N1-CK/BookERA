@@ -13,6 +13,10 @@ import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.pager.VerticalPager
+import android.util.LruCache
+import com.example.bookera.data.local.reader.ReaderNote
+import kotlinx.coroutines.CancellationException
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.*
@@ -41,6 +45,17 @@ class PdfReaderPlugin : ReaderPlugin {
     override fun ReaderScreen(filePath: String, bookId: Long, onBack: () -> Unit) {
         val context = LocalContext.current
         val prefs = remember { context.getSharedPreferences("reader_settings", 0) }
+        val db = remember { AppDatabase.getDatabase(context) }
+        val dao = remember { db.readerNoteDao() }
+        val notes by remember(bookId) { dao.observeBook(bookId) }.collectAsState(initial = emptyList())
+        val bookmarks = notes.filter { !it.isQuote && it.locationType == "pdf" }.map { it.position }.toSet()
+        var bookTitle by remember(bookId) { mutableStateOf(File(filePath).nameWithoutExtension) }
+        LaunchedEffect(bookId) { bookTitle = db.bookDao().getBookById(bookId)?.title ?: bookTitle }
+        var vertical by remember { mutableStateOf(prefs.getBoolean("vertical", false)) }
+        var showSettings by remember { mutableStateOf(false) }
+        val bitmapCache = remember(filePath) { object : LruCache<Int, Bitmap>(20 * 1024 * 1024) {
+            override fun sizeOf(key: Int, value: Bitmap) = value.allocationByteCount
+        } }
         var count by remember(filePath) { mutableIntStateOf(0) }
         var error by remember(filePath) { mutableStateOf<String?>(null) }
         LaunchedEffect(filePath) {
@@ -58,56 +73,68 @@ class PdfReaderPlugin : ReaderPlugin {
         }
         val pager = rememberPagerState(initialPage = prefs.getInt("page_$bookId", 0).coerceIn(0, count - 1), pageCount = { count })
         val scope = rememberCoroutineScope()
-        var bookmarks by remember(bookId) { mutableStateOf(prefs.getStringSet("pdf_bookmark_$bookId", emptySet()).orEmpty().mapNotNull { it.toIntOrNull() }.toSet()) }
         var showBookmarks by remember { mutableStateOf(false) }
         var showJump by remember { mutableStateOf(false) }
         var finished by remember(bookId) { mutableStateOf(false) }
         var scale by remember { mutableFloatStateOf(1f) }
         var offset by remember { mutableStateOf(Offset.Zero) }
-        val toolbarInk = Color(0xFF172837)
+        val toolbarInk = MaterialTheme.colorScheme.onSurface
         LaunchedEffect(pager.currentPage) { scale = 1f; offset = Offset.Zero }
-        LaunchedEffect(pager.currentPage) { prefs.edit().putInt("page_$bookId", pager.currentPage).apply() }
-        Column(Modifier.fillMaxSize().background(Color(0xFFDFE2E5))) {
+        LaunchedEffect(pager.settledPage) { prefs.edit().putInt("page_$bookId", pager.settledPage).apply() }
+        Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onBack) { Text("← Назад", color = toolbarInk) }
                 Spacer(Modifier.weight(1f))
+                TextButton(onClick = { showSettings = true }) { Text("Вид", color = toolbarInk) }
                 TextButton(onClick = { showBookmarks = true }) { Text("Метки", color = toolbarInk) }
                 TextButton(onClick = {
-                    bookmarks = if (pager.currentPage in bookmarks) bookmarks - pager.currentPage else bookmarks + pager.currentPage
-                    prefs.edit().putStringSet("pdf_bookmark_$bookId", bookmarks.map { it.toString() }.toSet()).apply()
+                    val page = pager.settledPage
+                    scope.launch {
+                        val id = ReaderNote.bookmarkId(bookId, page, "pdf")
+                        if (page in bookmarks) dao.delete(id)
+                        else dao.save(ReaderNote(id, bookId, bookTitle, page, locationType = "pdf"))
+                    }
                 }) { Text(if (pager.currentPage in bookmarks) "★" else "☆", color = toolbarInk) }
             }
-            HorizontalPager(state = pager, modifier = Modifier.weight(1f), userScrollEnabled = scale <= 1.01f) { index ->
+            val renderPage: @Composable (Int) -> Unit = { index ->
                 var bitmap by remember(filePath, index) { mutableStateOf<Bitmap?>(null) }
                 val transform = rememberTransformableState { zoom, pan, _ ->
                     scale = (scale * zoom).coerceIn(1f, 4f)
                     offset = if (scale == 1f) Offset.Zero else offset + pan
                 }
                 LaunchedEffect(filePath, index) {
-                    bitmap = withContext(Dispatchers.IO) {
-                        ParcelFileDescriptor.open(File(filePath), ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
-                            PdfRenderer(descriptor).use { renderer ->
-                                renderer.openPage(index).use { page ->
-                                    val ratio = minOf(1440f / page.width, 2000f / page.height, 2f)
-                                    val width = (page.width * ratio).toInt().coerceAtLeast(1)
-                                    val height = (page.height * ratio).toInt().coerceAtLeast(1)
-                                    val image = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                                    image.eraseColor(AndroidColor.WHITE)
-                                    page.render(image, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                                    image
+                    try {
+                        bitmap = bitmapCache.get(index) ?: withContext(Dispatchers.IO) {
+                            ParcelFileDescriptor.open(File(filePath), ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+                                PdfRenderer(descriptor).use { renderer ->
+                                    renderer.openPage(index).use { page ->
+                                        val ratio = minOf(1440f / page.width, 2000f / page.height, 2f)
+                                        val width = (page.width * ratio).toInt().coerceAtLeast(1)
+                                        val height = (page.height * ratio).toInt().coerceAtLeast(1)
+                                        val image = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                                        image.eraseColor(AndroidColor.WHITE)
+                                        page.render(image, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                        bitmapCache.put(index, image)
+                                        image
+                                    }
                                 }
                             }
                         }
-                    }
+                    } catch (e: CancellationException) { throw e }
+                    catch (e: Exception) { error = e.message ?: "Не удалось отрисовать PDF" }
                 }
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     bitmap?.let { Image(it.asImageBitmap(), "Страница ${index + 1}", Modifier.fillMaxSize()
                         .pointerInput(index) { detectTapGestures(onDoubleTap = { scale = if (scale > 1f) 1f else 2f; offset = Offset.Zero }) }
                         .transformable(transform).graphicsLayer(scaleX = scale, scaleY = scale,
                             translationX = offset.x, translationY = offset.y), contentScale = ContentScale.Fit) }
-                        ?: CircularProgressIndicator()
+                        ?: if (error == null) CircularProgressIndicator() else Text(error.orEmpty())
                 }
             }
+            if (vertical) VerticalPager(state = pager, modifier = Modifier.weight(1f), userScrollEnabled = scale <= 1.01f,
+                beyondViewportPageCount = 1) { renderPage(it) }
+            else HorizontalPager(state = pager, modifier = Modifier.weight(1f), userScrollEnabled = scale <= 1.01f,
+                beyondViewportPageCount = 1) { renderPage(it) }
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { scope.launch { pager.animateScrollToPage((pager.currentPage - 1).coerceAtLeast(0)) } }) { Text("←", color = toolbarInk) }
                 Spacer(Modifier.weight(1f))
@@ -120,10 +147,20 @@ class PdfReaderPlugin : ReaderPlugin {
                 }) { Text(if (finished) "✓" else "Готово", color = toolbarInk) }
                 else TextButton(onClick = { scope.launch { pager.animateScrollToPage(pager.currentPage + 1) } }) { Text("→", color = toolbarInk) }
             }
-            Slider(value = pager.currentPage.toFloat(), onValueChange = { scope.launch { pager.scrollToPage(it.toInt().coerceIn(0, count - 1)) } },
+            var sliderPage by remember(pager.settledPage) { mutableFloatStateOf(pager.settledPage.toFloat()) }
+            Slider(value = sliderPage, onValueChange = { sliderPage = it },
+                onValueChangeFinished = { scope.launch { pager.scrollToPage(sliderPage.toInt().coerceIn(0, count - 1)) } },
                 valueRange = 0f..(count - 1).coerceAtLeast(1).toFloat(), modifier = Modifier.padding(horizontal = 20.dp),
                 colors = SliderDefaults.colors(thumbColor = toolbarInk, activeTrackColor = toolbarInk))
         }
+        if (showSettings) AlertDialog(onDismissRequest = { showSettings = false }, title = { Text("Чтение PDF") },
+            text = { Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(if (vertical) "Листать вверх-вниз" else "Листать вправо-влево", Modifier.weight(1f))
+                    Switch(vertical, { vertical = it; prefs.edit().putBoolean("vertical", it).apply() })
+                }
+                Text("Масштаб: жест двумя пальцами или двойное нажатие. В PDF шрифт задан документом. Выделение цитат доступно в FB2, EPUB и TXT.")
+            } }, confirmButton = { TextButton(onClick = { showSettings = false }) { Text("Готово") } })
         if (showBookmarks) AlertDialog(onDismissRequest = { showBookmarks = false }, title = { Text("Закладки PDF") },
             text = { Column(Modifier.heightIn(max = 350.dp).verticalScroll(androidx.compose.foundation.rememberScrollState())) {
                 if (bookmarks.isEmpty()) Text("Закладок пока нет")

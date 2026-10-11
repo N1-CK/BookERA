@@ -8,6 +8,15 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.isSystemInDarkTheme
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.SideEffect
+import androidx.core.view.WindowCompat
+import androidx.compose.foundation.layout.safeDrawingPadding
+import com.example.bookera.data.local.LocalSettings
+import androidx.lifecycle.ViewModelProvider
+import com.example.bookera.ui.viewmodel.BookViewModelFactory
 import androidx.navigation.compose.rememberNavController
 import com.example.bookera.di.AppModule
 import com.example.bookera.ui.navigation.BookNavGraph
@@ -23,7 +32,8 @@ class MainActivity : ComponentActivity() {
         val database = AppModule.provideDatabase(applicationContext)
         val dao = AppModule.provideBookDao(database)
         val repository = AppModule.provideBookRepository(dao, applicationContext)
-        val viewModel = AppModule.provideBookViewModel(repository)
+        val viewModel = ViewModelProvider(this, BookViewModelFactory(repository))[com.example.bookera.ui.viewmodel.BookViewModel::class.java]
+        val settings = LocalSettings(applicationContext)
 
 
         val pluginsDir = File(filesDir, "plugins")
@@ -32,15 +42,24 @@ class MainActivity : ComponentActivity() {
         }
 
         setContent {
-            BookERATheme {
+            val theme by settings.theme.collectAsState()
+            val dark = when (theme) { "light" -> false; "dark" -> true; else -> isSystemInDarkTheme() }
+            SideEffect {
+                WindowCompat.getInsetsController(window, window.decorView).apply {
+                    isAppearanceLightStatusBars = !dark
+                    isAppearanceLightNavigationBars = !dark
+                }
+            }
+            BookERATheme(darkTheme = dark) {
                 Surface(
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().safeDrawingPadding(),
                     color = MaterialTheme.colorScheme.background
                 ) {
                     val navController = rememberNavController()
                     BookNavGraph(
                         navController = navController,
-                        viewModel = viewModel
+                        viewModel = viewModel,
+                        settings = settings
                     )
                 }
             }

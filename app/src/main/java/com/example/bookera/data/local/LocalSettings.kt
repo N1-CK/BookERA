@@ -13,6 +13,14 @@ class LocalSettings(context: Context) {
     val enabled = _enabled.asStateFlow()
     private val _lastRead = MutableStateFlow(prefs.getLong("last_read", 0L))
     val lastRead = _lastRead.asStateFlow()
+    private val _theme = MutableStateFlow(prefs.getString("theme", "system") ?: "system")
+    val theme = _theme.asStateFlow()
+
+    fun setTheme(value: String) {
+        require(value in setOf("system", "light", "dark"))
+        _theme.value = value
+        prefs.edit().putString("theme", value).apply()
+    }
 
     fun rename(value: String) {
         _name.value = value.take(40)

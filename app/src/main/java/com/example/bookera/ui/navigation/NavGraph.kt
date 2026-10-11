@@ -23,6 +23,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import com.example.bookera.data.model.Book
+import com.example.bookera.data.local.LocalSettings
 
 object Routes {
     const val BOOK_LIST = "book_list"
@@ -38,7 +39,8 @@ object Routes {
 @Composable
 fun BookNavGraph(
     navController: NavHostController,
-    viewModel: BookViewModel
+    viewModel: BookViewModel,
+    settings: LocalSettings
 ) {
     NavHost(
         navController = navController,
@@ -47,7 +49,8 @@ fun BookNavGraph(
         composable(Routes.BOOK_LIST) {
             BookListScreen(
                 viewModel = viewModel,
-                navController = navController
+                navController = navController,
+                settings = settings
             )
         }
 
