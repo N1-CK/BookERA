@@ -206,7 +206,8 @@ private fun BookCard(book: Book, onClick: () -> Unit, onFavorite: () -> Unit,
 }
 
 @Composable
-fun CoverArtwork(book: Book, settings: LocalSettings, modifier: Modifier = Modifier) {
+fun CoverArtwork(book: Book, modifier: Modifier = Modifier) {
+    val navy = MaterialTheme.colorScheme.onPrimaryContainer
     Box(modifier.clip(RoundedCornerShape(13.dp)).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
         Text(book.title.take(1).uppercase(), color = navy, style = MaterialTheme.typography.headlineLarge)
         if (!book.coverUrl.isNullOrBlank()) AsyncImage(model = book.coverUrl, contentDescription = "Обложка ${book.title}",

@@ -104,22 +104,22 @@ class PdfReaderPlugin : ReaderPlugin {
                 }
                 LaunchedEffect(filePath, index) {
                     try {
-                    bitmap = bitmapCache.get(index) ?: withContext(Dispatchers.IO) {
-                        ParcelFileDescriptor.open(File(filePath), ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
-                            PdfRenderer(descriptor).use { renderer ->
-                                renderer.openPage(index).use { page ->
-                                    val ratio = minOf(1440f / page.width, 2000f / page.height, 2f)
-                                    val width = (page.width * ratio).toInt().coerceAtLeast(1)
-                                    val height = (page.height * ratio).toInt().coerceAtLeast(1)
-                                    val image = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
-                                    image.eraseColor(AndroidColor.WHITE)
-                                    page.render(image, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-                                    bitmapCache.put(index, image)
-                                    image
+                        bitmap = bitmapCache.get(index) ?: withContext(Dispatchers.IO) {
+                            ParcelFileDescriptor.open(File(filePath), ParcelFileDescriptor.MODE_READ_ONLY).use { descriptor ->
+                                PdfRenderer(descriptor).use { renderer ->
+                                    renderer.openPage(index).use { page ->
+                                        val ratio = minOf(1440f / page.width, 2000f / page.height, 2f)
+                                        val width = (page.width * ratio).toInt().coerceAtLeast(1)
+                                        val height = (page.height * ratio).toInt().coerceAtLeast(1)
+                                        val image = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                                        image.eraseColor(AndroidColor.WHITE)
+                                        page.render(image, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                                        bitmapCache.put(index, image)
+                                        image
+                                    }
                                 }
                             }
                         }
-                    }
                     } catch (e: CancellationException) { throw e }
                     catch (e: Exception) { error = e.message ?: "Не удалось отрисовать PDF" }
                 }

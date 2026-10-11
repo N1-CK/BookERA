@@ -87,10 +87,11 @@ class BookRepository(
     suspend fun setRead(bookId: Long, read: Boolean) =
         bookDao.setRead(bookId, read, if (read) System.currentTimeMillis() else null)
 
-    suspend fun delete(book: Book) =
+    suspend fun delete(book: Book) {
         bookDao.delete(book)
         notes.deleteBook(book.id)
         synchronized(searchCache) { searchCache.clear() }
+    }
 
     suspend fun removeFromLibrary(book: Book) = withContext(Dispatchers.IO) {
         book.localFilePath?.let { path ->
@@ -103,7 +104,7 @@ class BookRepository(
             val file = File(path).canonicalFile
             if (file.parentFile == coversDir) file.delete()
         }
-        bookDao.delete(book)
+        delete(book)
     }
 
     suspend fun importBook(uri: Uri): Result<Book> = withContext(Dispatchers.IO) {
