@@ -1,6 +1,7 @@
 package com.example.bookera.ui.screens
 
 import android.widget.Toast
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedContent
@@ -16,6 +17,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.outlined.FavoriteBorder
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,36 +33,45 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.navigation.NavHostController
 import coil.compose.AsyncImage
+import com.example.bookera.data.local.LocalSettings
+import com.example.bookera.data.local.ReadingActivityStore
 import com.example.bookera.data.model.Book
 import com.example.bookera.data.model.SearchField
-import com.example.bookera.data.local.LocalSettings
-import androidx.compose.material.icons.outlined.Tune
-import androidx.compose.material.icons.outlined.MenuBook
-import androidx.compose.material.icons.outlined.Person
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.ui.text.input.KeyboardType
 import com.example.bookera.ui.navigation.Routes
 import com.example.bookera.ui.viewmodel.BookViewModel
+import com.example.bookera.ui.theme.SystemBars
+
+private val navy: Color @Composable get() = HomeInk
+private val mist: Color @Composable get() = HomePaper
+private val accent: Color @Composable get() = Electric
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BookListScreen(viewModel: BookViewModel, navController: NavHostController, settings: LocalSettings, modifier: Modifier = Modifier) {
-    val colors = MaterialTheme.colorScheme
-    val navy = colors.onSurface
-    val mist = colors.background
-    val accent = colors.primary
-    val options by viewModel.searchOptions.collectAsState()
-    val notes by viewModel.notes.collectAsState()
-    val error by viewModel.error.collectAsState()
-    var showFilters by remember { mutableStateOf(false) }
-    val books by viewModel.books.collectAsState()
     val allBooks by viewModel.allBooks.collectAsState()
     val favorites by viewModel.favoriteBooks.collectAsState()
+    val results by viewModel.searchResults.collectAsState()
+    val statuses by viewModel.sourceStatuses.collectAsState()
     val loading by viewModel.isLoading.collectAsState()
+    val error by viewModel.error.collectAsState()
     val query by viewModel.searchQuery.collectAsState()
     val context = LocalContext.current
+    val store = remember { ReadingActivityStore.get(context) }
+    val options by viewModel.searchOptions.collectAsState()
+    val notes by viewModel.notes.collectAsState()
+    val lastRead by settings.lastRead.collectAsState()
+    var showFilters by remember { mutableStateOf(false) }
+    val openNote: (com.example.bookera.data.local.reader.ReaderNote) -> Unit = { note ->
+        val key = if (note.locationType == "pdf") "page_${note.bookId}" else "position_${note.bookId}"
+        context.getSharedPreferences("reader_settings", 0).edit().putInt(key, note.position).apply()
+        navController.navigate(Routes.reader(note.bookId))
+    }
     var tab by rememberSaveable { mutableIntStateOf(0) }
     var filter by rememberSaveable { mutableIntStateOf(0) }
+    var passages by rememberSaveable { mutableStateOf(false) }
+    var sources by remember { mutableStateOf(false) }
     var pendingDeletion by remember { mutableStateOf<Book?>(null) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
         uri?.let { viewModel.importBook(it) { result ->
@@ -68,84 +79,112 @@ fun BookListScreen(viewModel: BookViewModel, navController: NavHostController, s
         } }
     }
     val importAction = { picker.launch(arrayOf("application/epub+zip", "application/pdf", "text/plain", "application/xml", "application/octet-stream", "*/*")) }
-    val visible = when (filter) {
-        1 -> books.filter { it.isDownloaded }
-        2 -> books.filter { it.isFavorite }
-        3 -> books.filter { it.isRead }
-        else -> books
-    }
-    Scaffold(modifier = modifier, containerColor = mist,
+    val byId = remember(allBooks) { allBooks.associateBy { it.id } }
+    val visible = if (options.isActive) (allBooks.filter { it.isDownloaded && options.matches(it) } +
+        results.mapNotNull { r -> byId["${r.pluginId}:${r.id}".hashCode().toLong()] }).distinctBy { it.id }
+        else when (filter) {
+            1 -> allBooks.filter { it.isDownloaded }
+            2 -> favorites
+            3 -> allBooks.filter { it.isRead }
+            else -> allBooks.filter { it.isDownloaded || it.isFavorite || it.isRead || it.rating > 0f }
+        }
+    val sourceNames = remember(results, statuses) { results.associate {
+        "${it.pluginId}:${it.id}".hashCode().toLong() to statuses.find { status -> status.id == it.pluginId }?.name.orEmpty()
+    } }
+    SystemBars(mist, MaterialTheme.colorScheme.surface)
+    BackHandler(enabled = passages || tab != 0) { if (passages) passages = false else { tab = 0; viewModel.searchBooks("") } }
+    Scaffold(modifier = modifier.imePadding(), containerColor = mist,
         bottomBar = {
-            NavigationBar(containerColor = colors.surface) {
+            NavigationBar(containerColor = MaterialTheme.colorScheme.surface) {
                 val navColors = NavigationBarItemDefaults.colors(selectedIconColor = accent, selectedTextColor = accent,
-                    unselectedIconColor = colors.onSurfaceVariant, unselectedTextColor = colors.onSurfaceVariant, indicatorColor = colors.primaryContainer)
-                NavigationBarItem(selected = tab == 0, onClick = { tab = 0 }, icon = { Icon(Icons.Outlined.MenuBook, null) }, label = { Text("Библиотека") }, colors = navColors)
-                NavigationBarItem(selected = tab == 1, onClick = { tab = 1 }, icon = { Icon(Icons.Outlined.Person, null) }, label = { Text("Профиль") }, colors = navColors)
+                    unselectedIconColor = MaterialTheme.colorScheme.onSurfaceVariant, unselectedTextColor = MaterialTheme.colorScheme.onSurfaceVariant, indicatorColor = Lavender)
+                NavigationBarItem(selected = tab == 0, onClick = { tab = 0; passages = false; viewModel.searchBooks("") },
+                    icon = { Icon(Icons.Outlined.Home, null) }, label = { Text("Главная") }, colors = navColors)
+                NavigationBarItem(selected = tab == 1, onClick = { tab = 1; passages = false },
+                    icon = { Icon(Icons.Outlined.AutoStories, null) }, label = { Text("Книги") }, colors = navColors)
+                NavigationBarItem(selected = tab == 2, onClick = { tab = 2; passages = false; viewModel.searchBooks("") },
+                    icon = { Icon(Icons.Outlined.Person, null) }, label = { Text("Профиль") }, colors = navColors)
             }
         }
     ) { padding ->
-        AnimatedContent(targetState = tab, label = "section", modifier = Modifier.padding(padding)) { destination ->
-            if (destination == 1) ProfileScreen(books = allBooks, favorites = favorites.size, onImport = importAction,
-                onOpenLibrary = { tab = 0 }, onOpenBook = { navController.navigate(Routes.bookDetail(it)) },
-                onSetRead = viewModel::setRead, settings = settings, notes = notes,
-                onDeleteNote = viewModel::deleteNote,
-                onOpenNote = { note ->
-                    val key = if (note.locationType == "pdf") "page_${note.bookId}" else "position_${note.bookId}"
-                    context.getSharedPreferences("reader_settings", 0).edit().putInt(key, note.position).apply()
-                    navController.navigate(Routes.reader(note.bookId))
-                })
-            else Column(Modifier.fillMaxSize()) {
-                Row(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 10.dp), verticalAlignment = Alignment.CenterVertically) {
-                    Text("BookERA", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Black, color = navy)
-                    Spacer(Modifier.weight(1f))
-                    Text("Ваша библиотека", style = MaterialTheme.typography.labelMedium, color = colors.onSurfaceVariant)
-                }
-                Row(Modifier.fillMaxWidth().padding(horizontal = 18.dp), verticalAlignment = Alignment.CenterVertically) {
-                    OutlinedTextField(value = query, onValueChange = viewModel::searchBooks, modifier = Modifier.weight(1f),
-                        placeholder = { Text(when (options.field) { SearchField.TITLE -> "Название книги"; SearchField.AUTHOR -> "Имя автора"; else -> "Название или автор" }) },
-                        leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true, shape = RoundedCornerShape(16.dp))
-                    IconButton(onClick = { showFilters = true }) { Icon(Icons.Outlined.Tune, "Параметры поиска", tint = accent) }
-                }
-                if (options.field != SearchField.ALL || options.author.isNotBlank() || options.year != null) {
-                    TextButton(onClick = { showFilters = true }, modifier = Modifier.padding(horizontal = 18.dp)) {
-                        Text(listOfNotNull(options.field.label, options.author.takeIf { it.isNotBlank() }, options.year?.toString()).joinToString(" · "))
+        AnimatedContent(targetState = if (passages) 3 else tab, label = "section", modifier = Modifier.padding(padding)) { destination ->
+            when (destination) {
+                0 -> HomeScreen(allBooks, store, notes, lastRead, onRead = { navController.navigate(Routes.reader(it)) },
+                    onSearch = { tab = 1 }, onLibrary = { tab = 1; filter = 1 }, onPassages = { passages = true }, onImport = importAction)
+                2 -> ProfileScreen(books = allBooks.filter { it.isDownloaded || it.isRead || it.isFavorite || it.rating > 0f },
+                    favorites = favorites.size, onImport = importAction, onOpenLibrary = { tab = 1 },
+                    onOpenBook = { navController.navigate(Routes.bookDetail(it)) }, onSetRead = viewModel::setRead, settings = settings, notes = notes, onOpenNote = openNote, onDeleteNote = viewModel::deleteNote)
+                3 -> PassagesScreen(allBooks, notes, onBack = { passages = false }, onOpenNote = openNote, onDeleteNote = viewModel::deleteNote)
+                else -> Column(Modifier.fillMaxSize()) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 14.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text("Новая история", style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = navy, modifier = Modifier.weight(1f))
+                            IconButton(onClick = { sources = true }) { Icon(Icons.Outlined.Tune, "Настроить источники", tint = accent) }
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        OutlinedTextField(value = query, onValueChange = viewModel::searchBooks, modifier = Modifier.fillMaxWidth(),
+                            placeholder = { Text(when (options.field) { SearchField.TITLE -> "Название книги"; SearchField.AUTHOR -> "Имя автора"; else -> "Название или автор" }) }, leadingIcon = { Icon(Icons.Default.Search, null) }, singleLine = true,
+                            trailingIcon = { if (options.isActive) IconButton(onClick = { viewModel.applySearch(com.example.bookera.data.model.BookSearchQuery()) }) { Icon(Icons.Outlined.Close, "Очистить поиск") } },
+                            colors = OutlinedTextFieldDefaults.colors(focusedContainerColor = MaterialTheme.colorScheme.surface, unfocusedContainerColor = MaterialTheme.colorScheme.surface,
+                                focusedBorderColor = accent, unfocusedBorderColor = Color.Transparent), shape = RoundedCornerShape(22.dp))
                     }
-                }
-                Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 18.dp, vertical = 13.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    listOf("Все", "Мои книги", "Избранное", "Прочитано").forEachIndexed { index, label ->
-                        FilterChip(selected = filter == index, onClick = { filter = index }, label = { Text(label) },
-                            colors = FilterChipDefaults.filterChipColors(containerColor = colors.surface, labelColor = navy,
-                                selectedContainerColor = colors.primaryContainer, selectedLabelColor = colors.onPrimaryContainer))
+                    Row(Modifier.padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        AssistChip(onClick = { showFilters = true }, label = { Text("Фильтры") }, leadingIcon = { Icon(Icons.Outlined.FilterList, null, Modifier.size(18.dp)) })
+                        if (options.field != SearchField.ALL || options.author.isNotBlank() || options.year != null) {
+                            TextButton(onClick = { showFilters = true }) { Text(listOfNotNull(options.field.label, options.author.takeIf { it.isNotBlank() }, options.year?.toString()).joinToString(" · "), maxLines = 1) }
+                        }
                     }
-                }
-                if (loading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = accent)
-                error?.let { message -> Text(message, color = colors.error, modifier = Modifier.padding(horizontal = 18.dp)) }
-                if (visible.isEmpty()) Box(Modifier.fillMaxSize().padding(30.dp), contentAlignment = Alignment.Center) {
-                    Text(if (query.isBlank() && filter == 3) "Прочитанные книги появятся здесь" else if (query.isBlank()) "Откройте профиль, чтобы добавить книгу, или найдите её в каталоге" else "Совпадений пока нет",
-                        color = navy, style = MaterialTheme.typography.titleMedium)
-                } else LazyColumn(contentPadding = PaddingValues(start = 18.dp, end = 18.dp, bottom = 24.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                    items(visible, key = { it.id }) { book ->
-                        SwipeToDismissBox(state = rememberSwipeToDismissBoxState(confirmValueChange = { direction ->
-                            when (direction) {
-                                SwipeToDismissBoxValue.StartToEnd -> { viewModel.toggleFavorite(book.id, !book.isFavorite); false }
-                                SwipeToDismissBoxValue.EndToStart -> { pendingDeletion = book; false }
-                                else -> false
+                    if (!options.isActive) Row(Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 18.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        listOf("Все", "Мои книги", "Избранное", "Прочитано").forEachIndexed { index, label ->
+                            FilterChip(selected = filter == index, onClick = { filter = index }, label = { Text(label) },
+                                colors = FilterChipDefaults.filterChipColors(containerColor = MaterialTheme.colorScheme.surface, labelColor = navy,
+                                    selectedContainerColor = accent, selectedLabelColor = MaterialTheme.colorScheme.onPrimary))
+                        }
+                    }
+                    if (loading) LinearProgressIndicator(Modifier.fillMaxWidth(), color = accent)
+                    LazyColumn(contentPadding = PaddingValues(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                        if (options.isActive) item {
+                            Column(Modifier.animateContentSize()) {
+                                Text("${results.size} изданий · ${statuses.count { !it.failed && it.message != "Ищем…" }} источников ответили", color = navy,
+                                    style = MaterialTheme.typography.labelLarge)
+                                statuses.forEach { status -> Text("${status.name}: ${status.message}",
+                                    color = if (status.failed) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant, style = MaterialTheme.typography.labelSmall) }
+                                if (!loading && statuses.any { it.failed }) TextButton(onClick = { viewModel.retrySearch() }) { Text("Повторить поиск") }
                             }
-                        }), backgroundContent = {
-                            Box(Modifier.fillMaxSize().clip(RoundedCornerShape(22.dp))
-                                .background(if (book.isFavorite) accent else navy).padding(20.dp),
-                                contentAlignment = Alignment.CenterEnd) { Text("Избранное  •  Удалить", color = Color.White) }
-                        }) {
-                            BookCard(book, onClick = { navController.navigate(Routes.bookDetail(book.id)) },
-                                onFavorite = { viewModel.toggleFavorite(book.id, !book.isFavorite) },
-                                onMissingCover = { viewModel.resolveCover(book) })
+                        }
+                        error?.let { item { Text(it, color = MaterialTheme.colorScheme.error) } }
+                        if (visible.isEmpty()) item {
+                            Column(Modifier.padding(20.dp)) {
+                                Icon(Icons.Outlined.AutoStories, null, Modifier.size(48.dp), tint = accent)
+                                Text(if (options.isActive) if (loading) "Ищем вашу историю…" else "Совпадений нет. Попробуйте другое название или автора."
+                                    else "Ваши книги появятся здесь. Найдите книгу или добавьте свой файл.", color = navy, modifier = Modifier.padding(vertical = 18.dp))
+                                if (!options.isActive) Button(onClick = importAction) { Text("Добавить книгу") }
+                            }
+                        }
+                        items(visible, key = { it.id }) { book ->
+                            Column {
+                                if (options.isActive) Text(sourceNames[book.id].orEmpty(),
+                                    color = accent, style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(start = 10.dp, bottom = 4.dp))
+                                SwipeToDismissBox(state = rememberSwipeToDismissBoxState(confirmValueChange = { direction ->
+                                    when (direction) {
+                                        SwipeToDismissBoxValue.StartToEnd -> { viewModel.toggleFavorite(book.id, !book.isFavorite); false }
+                                        SwipeToDismissBoxValue.EndToStart -> { pendingDeletion = book; false }
+                                        else -> false
+                                    }
+                                }), backgroundContent = {
+                                    Box(Modifier.fillMaxSize().clip(RoundedCornerShape(22.dp)).background(accent).padding(20.dp), contentAlignment = Alignment.CenterEnd) {
+                                        Text("Избранное  •  Удалить", color = Color.White)
+                                    }
+                                }) { BookCard(book, onClick = { navController.navigate(Routes.bookDetail(book.id)) },
+                                    onFavorite = { viewModel.toggleFavorite(book.id, !book.isFavorite) }) }
+                            }
                         }
                     }
                 }
             }
         }
     }
+    if (sources) SourceSettingsSheet(viewModel, settings, onDismiss = { sources = false; if (options.isActive) viewModel.retrySearch() })
     if (showFilters) {
         var field by remember { mutableStateOf(options.field) }
         var author by remember { mutableStateOf(options.author) }
@@ -171,21 +210,17 @@ fun BookListScreen(viewModel: BookViewModel, navController: NavHostController, s
     }
     pendingDeletion?.let { book ->
         AlertDialog(onDismissRequest = { pendingDeletion = null }, title = { Text("Удалить книгу?") },
-            text = { Text("${book.title} будет удалена из библиотеки. Импортированный файл также удалится.") },
+            text = { Text("${book.title} будет удалена из библиотеки.") },
             confirmButton = { TextButton(onClick = { viewModel.removeBook(book); pendingDeletion = null }) { Text("Удалить") } },
             dismissButton = { TextButton(onClick = { pendingDeletion = null }) { Text("Отмена") } })
     }
 }
 
 @Composable
-private fun BookCard(book: Book, onClick: () -> Unit, onFavorite: () -> Unit,
+internal fun BookCard(book: Book, onClick: () -> Unit, onFavorite: () -> Unit,
     onMissingCover: () -> Unit = {}) {
-    val colors = MaterialTheme.colorScheme
-    val navy = colors.onSurface
-    val accent = colors.primary
-    LaunchedEffect(book.id, book.coverUrl) { if (book.coverUrl.isNullOrBlank()) onMissingCover() }
     Card(Modifier.fillMaxWidth().animateContentSize().clickable(onClick = onClick), shape = RoundedCornerShape(22.dp),
-        colors = CardDefaults.cardColors(containerColor = colors.surface), elevation = CardDefaults.cardElevation(2.dp)) {
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface), elevation = CardDefaults.cardElevation(2.dp)) {
         Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             CoverArtwork(book, Modifier.size(86.dp, 120.dp))
             Spacer(Modifier.width(16.dp))
@@ -193,11 +228,11 @@ private fun BookCard(book: Book, onClick: () -> Unit, onFavorite: () -> Unit,
                 Text(book.title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold,
                     color = navy, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Spacer(Modifier.height(7.dp))
-                Text(book.author, style = MaterialTheme.typography.bodyMedium, color = colors.onSurfaceVariant, maxLines = 1)
+                Text(book.author, style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1)
+                book.publishedYear?.let { Text(it.toString(), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
                 Spacer(Modifier.height(13.dp))
-                book.publishedYear?.let { Text(it.toString(), style = MaterialTheme.typography.labelSmall, color = colors.onSurfaceVariant) }
                 Text(if (book.isRead) "✓ Прочитано" else if (book.isDownloaded) "В библиотеке · Читать" else "Каталог · Подробнее",
-                    style = MaterialTheme.typography.labelSmall, color = accent)
+                    style = MaterialTheme.typography.labelSmall, color = Electric)
             }
             IconButton(onClick = onFavorite) { Icon(if (book.isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
                 "Избранное", tint = accent) }
@@ -207,8 +242,7 @@ private fun BookCard(book: Book, onClick: () -> Unit, onFavorite: () -> Unit,
 
 @Composable
 fun CoverArtwork(book: Book, modifier: Modifier = Modifier) {
-    val navy = MaterialTheme.colorScheme.onPrimaryContainer
-    Box(modifier.clip(RoundedCornerShape(13.dp)).background(MaterialTheme.colorScheme.primaryContainer), contentAlignment = Alignment.Center) {
+    Box(modifier.clip(RoundedCornerShape(13.dp)).background(Lavender), contentAlignment = Alignment.Center) {
         Text(book.title.take(1).uppercase(), color = navy, style = MaterialTheme.typography.headlineLarge)
         if (!book.coverUrl.isNullOrBlank()) AsyncImage(model = book.coverUrl, contentDescription = "Обложка ${book.title}",
             modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)

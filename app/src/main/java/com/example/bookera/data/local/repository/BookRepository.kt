@@ -3,15 +3,12 @@ package com.example.bookera.data.local.repository
 import android.content.Context
 import android.net.Uri
 import android.provider.OpenableColumns
-import com.example.bookera.data.network.ApiClient
-import com.example.bookera.data.file.ArchiveExtractor
 import com.example.bookera.data.local.dao.BookDao
 import com.example.bookera.data.model.Book
 import com.example.bookera.data.plugin.BookSearchResult
 import com.example.bookera.data.plugin.DownloadPlugin
 import com.example.bookera.data.plugin.PluginManager
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.flow.Flow
@@ -23,6 +20,8 @@ import java.util.UUID
 import java.util.zip.ZipFile
 import org.jsoup.Jsoup
 import org.jsoup.parser.Parser
+import com.example.bookera.data.network.catalogResult
+import com.example.bookera.data.plugin.CatalogSearch
 import com.example.bookera.data.db.AppDatabase
 import com.example.bookera.data.local.reader.importLegacyNotes
 import com.example.bookera.data.model.BookSearchQuery
@@ -37,10 +36,9 @@ class BookRepository(
     val notes = AppDatabase.getDatabase(context).readerNoteDao()
     suspend fun migrateNotes() = importLegacyNotes(context, bookDao.getAllBooks().first(), notes)
 
-    private val searchCache = object : LinkedHashMap<BookSearchQuery, Pair<Long, List<BookSearchResult>>>(16, .75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<BookSearchQuery, Pair<Long, List<BookSearchResult>>>) = size > 12
-    }
-    private val coverSlots = Semaphore(2)
+    private val coverSlots = Semaphore(1)
+    private val sourcePrefs = context.getSharedPreferences("catalog_books", 0)
+    private var coverUnavailableUntil = 0L
     private val attemptedCovers = mutableSetOf<Long>()
 
     private val pluginManager by lazy {
@@ -90,7 +88,8 @@ class BookRepository(
     suspend fun delete(book: Book) {
         bookDao.delete(book)
         notes.deleteBook(book.id)
-        synchronized(searchCache) { searchCache.clear() }
+        sourcePrefs.edit().remove("source_${book.id}").apply()
+        com.example.bookera.data.local.ReadingActivityStore.get(context).forget(book.id)
     }
 
     suspend fun removeFromLibrary(book: Book) = withContext(Dispatchers.IO) {
@@ -198,7 +197,7 @@ class BookRepository(
     }
 
     suspend fun resolveCover(book: Book) = withContext(Dispatchers.IO) {
-        if (!book.coverUrl.isNullOrBlank()) return@withContext
+        if (!book.coverUrl.isNullOrBlank() || android.os.SystemClock.elapsedRealtime() < coverUnavailableUntil) return@withContext
         val shouldLookup = synchronized(attemptedCovers) {
             if (attemptedCovers.size >= 40) false else attemptedCovers.add(book.id)
         }
@@ -211,49 +210,61 @@ class BookRepository(
         }
     }
 
-    private suspend fun lookupCover(title: String, author: String): String? = withTimeoutOrNull(5_000L) { runCatching {
+    private suspend fun lookupCover(title: String, author: String): String? {
+        if (android.os.SystemClock.elapsedRealtime() < coverUnavailableUntil) return null
         val query = "$title ${author.takeUnless { it == "My files" || it == "Unknown Author" }.orEmpty()}".trim()
-        val match = ApiClient.bookApiService.searchBooks(query, limit = 3).docs.firstOrNull {
-            (it.coverId != null || !it.isbn.isNullOrEmpty()) && it.title.equals(title, ignoreCase = true) &&
-                (author == "My files" || author == "Unknown Author" ||
-                    it.authorName.orEmpty().any { name -> name.contains(author, true) || author.contains(name, true) })
+        val result = pluginManager.getPlugin("googlebooks")?.search(query) ?: return null
+        if (result.isFailure) {
+            coverUnavailableUntil = android.os.SystemClock.elapsedRealtime() + 60_000L
+            return null
         }
-        match?.getCoverUrl("M")
-    }.getOrNull() }
+        return result.getOrNull()?.firstOrNull { it.title.equals(title, true) }?.coverUrl
+    }
 
 
     // ============================================================
     // ПОИСК ЧЕРЕЗ ПЛАГИНЫ
     // ============================================================
 
-    suspend fun searchWithPlugins(query: BookSearchQuery): Result<List<BookSearchResult>> = withContext(Dispatchers.IO) {
-        try {
-            val cached = synchronized(searchCache) { searchCache[query] }
-            if (cached != null && System.currentTimeMillis() - cached.first < 120_000L) {
-                return@withContext Result.success(cached.second)
-            }
-            val results = pluginManager.searchAllPlugins(query) { results ->
+    suspend fun searchWithPlugins(query: BookSearchQuery,
+        onUpdate: suspend (CatalogSearch) -> Unit = {}): Result<List<BookSearchResult>> = catalogResult {
+        withContext(Dispatchers.IO) {
+            val persisted = mutableSetOf<String>()
+            pluginManager.searchCatalogs(query) { snapshot ->
                 coroutineContext.ensureActive()
-                val ids = results.map { "${it.pluginId}:${it.id}".hashCode().toLong() }
-                val existing = bookDao.getByIds(ids).associateBy { it.id }
-                val books = results.mapIndexed { index, result ->
-                    val old = existing[ids[index]]
-                    old?.copy(coverUrl = result.coverUrl ?: old.coverUrl,
-                        publishedYear = result.publishedYear ?: old.publishedYear,
-                        downloadUrl = result.downloadUrl.ifBlank { old.downloadUrl.orEmpty() })
-                        ?: Book(id = ids[index], title = result.title, author = result.author,
-                            description = result.description, coverUrl = result.coverUrl,
-                            downloadUrl = result.downloadUrl, publishedYear = result.publishedYear)
+                val fresh = snapshot.books.filter { persisted.add("${it.pluginId}:${it.id}") }
+                if (fresh.isNotEmpty()) {
+                    val ids = fresh.map { "${it.pluginId}:${it.id}".hashCode().toLong() }
+                    val existing = bookDao.getByIds(ids).associateBy { it.id }
+                    val books = fresh.mapIndexed { i, result ->
+                        val old = existing[ids[i]]
+                        old?.copy(coverUrl = old.coverUrl ?: result.coverUrl,
+                            description = old.description ?: result.description,
+                            publishedYear = result.publishedYear ?: old.publishedYear,
+                            downloadUrl = result.downloadUrl.ifBlank { old.downloadUrl.orEmpty() })
+                            ?: Book(id = ids[i], title = result.title, author = result.author,
+                                description = result.description, coverUrl = result.coverUrl,
+                                downloadUrl = result.downloadUrl, publishedYear = result.publishedYear)
+                    }
+                    bookDao.insertAll(books)
+                    sourcePrefs.edit().apply {
+                        fresh.forEachIndexed { i, result -> putString("source_${ids[i]}", result.pluginId) }
+                    }.apply()
                 }
-                // Publish each source as it finishes; cover lookups run only for visible cards.
-                bookDao.insertAll(books)
-            }
-            if (results.isNotEmpty()) synchronized(searchCache) { searchCache[query] = System.currentTimeMillis() to results }
-            Result.success(results)
-        } catch (e: CancellationException) { throw e }
-        catch (e: Exception) { Result.failure(e) }
+                onUpdate(snapshot)
+            }.books
+        }
     }
 
+    fun retryUnavailable() = pluginManager.retryUnavailable()
+    fun close() = pluginManager.close()
+    fun sourceForBook(bookId: Long): String? = sourcePrefs.getString("source_$bookId", null)
+    suspend fun downloadLinks(book: Book): Pair<String, List<com.example.bookera.data.plugin.DownloadLink>>? {
+        val url = book.downloadUrl?.takeIf { it.isNotBlank() } ?: return null
+        val plugin = sourceForBook(book.id)?.let { pluginManager.getPlugin(it) }
+            ?: pluginManager.getAllPlugins().firstOrNull { it.canHandle(url) } ?: return null
+        return plugin.id to plugin.findAllDownloadLinks(url)
+    }
 
     // ============================================================
     // СКАЧИВАНИЕ КНИГИ

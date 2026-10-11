@@ -100,6 +100,8 @@ internal fun pageAt(pages: List<LaidPage>, position: Int): Int {
 @Composable
 internal fun PagedTextReader(title: String, bookId: Long, pages: List<ReadingPage>, onBack: () -> Unit) {
     val context = LocalContext.current
+    com.example.bookera.ui.reader.ReadingSession()
+    val activityStore = remember { com.example.bookera.data.local.ReadingActivityStore.get(context) }
     val prefs = remember { context.getSharedPreferences("reader_settings", 0) }
     val db = remember { AppDatabase.getDatabase(context) }
     val noteDao = remember { db.readerNoteDao() }
@@ -123,16 +125,18 @@ internal fun PagedTextReader(title: String, bookId: Long, pages: List<ReadingPag
     val ink = if (palette == 2) Color(0xFFF8F1E7) else Color(0xFF242026)
     val muted = if (palette == 2) Color(0xFFCAC0D0) else Color(0xFF62554A)
     val accent = if (palette == 2) Color(0xFFFFA16B) else Color(0xFFAD3900)
+    com.example.bookera.ui.theme.SystemBars(paper)
     val scope = rememberCoroutineScope()
     val density = LocalDensity.current
     val pager = rememberPagerState(pageCount = { laidPages.size.coerceAtLeast(1) })
     val current = pager.settledPage.coerceIn(0, laidPages.lastIndex.coerceAtLeast(0))
     val currentPage = laidPages.getOrNull(current)
     val currentMark = currentPage?.let { page -> notes.firstOrNull { !it.isQuote && it.locationType == "text" && pageAt(laidPages, it.position) == current } }
-    LaunchedEffect(pager.settledPage, restoring) {
+    LaunchedEffect(pager.settledPage, restoring, laidPages) {
         if (!restoring) laidPages.getOrNull(pager.settledPage)?.let { page ->
             anchor = page.position
             prefs.edit().putInt("position_$bookId", anchor).apply()
+            activityStore.remember(bookId, pager.settledPage.toFloat() / laidPages.lastIndex.coerceAtLeast(1))
         }
     }
     fun goTo(position: Int) {

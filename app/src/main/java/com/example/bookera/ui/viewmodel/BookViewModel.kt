@@ -10,6 +10,8 @@ import com.example.bookera.data.model.Book
 import com.example.bookera.data.local.repository.BookRepository
 import com.example.bookera.data.plugin.BookSearchResult
 import com.example.bookera.data.plugin.DownloadPlugin
+import com.example.bookera.data.plugin.SourceStatus
+import com.example.bookera.data.plugin.DownloadLink
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -51,6 +53,8 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
     private val _availablePlugins = MutableStateFlow<List<DownloadPlugin>>(emptyList())
     val availablePlugins: StateFlow<List<DownloadPlugin>> = _availablePlugins.asStateFlow()
 
+    private val _sourceStatuses = MutableStateFlow<List<SourceStatus>>(emptyList())
+    val sourceStatuses = _sourceStatuses.asStateFlow()
     private val readerManager by lazy { ReaderManager() }
     private var searchJob: Job? = null
 
@@ -99,7 +103,7 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
         viewModelScope.launch { repository.migrateNotes() }
     }
 
-    private fun loadPlugins() {
+    fun loadPlugins() {
         viewModelScope.launch {
             _availablePlugins.value = repository.getAvailablePlugins()
         }
@@ -116,7 +120,9 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
         _searchOptions.value = options
         _searchQuery.value = options.text
         searchJob?.cancel()
-        _isLoading.value = false
+        _searchResults.value = emptyList()
+        _sourceStatuses.value = emptyList()
+        _isLoading.value = options.isActive
         _error.value = null
         if (options.isActive) {
             searchJob = viewModelScope.launch {
@@ -124,12 +130,13 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
                 _isLoading.value = true
                 _error.value = null
                 try {
-                    val pluginResult = repository.searchWithPlugins(options)
-                    pluginResult.onSuccess { results ->
-                        _searchResults.value = results
-                    }.onFailure { error ->
-                        _error.value = error.message ?: "Не удалось выполнить поиск"
-                    }
+                    repository.searchWithPlugins(options) { snapshot ->
+                        if (_searchOptions.value == options) {
+                            _searchResults.value = snapshot.books
+                            _sourceStatuses.value = snapshot.statuses
+                        }
+                    }.getOrThrow()
+                    if (_sourceStatuses.value.isEmpty()) _error.value = "Включите хотя бы один источник в настройках поиска"
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
@@ -143,6 +150,11 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
             _isLoading.value = false
         }
     }
+
+    suspend fun downloadLinks(book: Book): Pair<String, List<DownloadLink>>? = repository.downloadLinks(book)
+    suspend fun findEditions(title: String): List<BookSearchResult> = repository.searchWithPlugins(BookSearchQuery(text = title)).getOrThrow()
+    fun retrySearch() { repository.retryUnavailable(); applySearch(_searchOptions.value) }
+    override fun onCleared() { repository.close(); super.onCleared() }
 
     fun importBook(uri: Uri, onComplete: (Result<Book>) -> Unit) {
         viewModelScope.launch { onComplete(repository.importBook(uri)) }
@@ -224,6 +236,8 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
                     onComplete(false)
                 }
 
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
 
                 _error.value =

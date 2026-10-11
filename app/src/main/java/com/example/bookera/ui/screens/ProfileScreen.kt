@@ -83,7 +83,7 @@ fun ProfileScreen(
             Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                 StatCard("Книг", finished.size.toString(), Modifier.weight(1f))
                 StatCard("Страниц¹", pageTotal.toString(), Modifier.weight(1f))
-                StatCard("Оценка", if (rated.isEmpty()) "—" else "%.1f".format(Locale.getDefault(), rated.map { it.rating }.average()), Modifier.weight(1f))
+                StatCard("Оценка", if (rated.isEmpty()) "—" else "%.1f".format(Locale.getDefault(), rated.map { it.rating * 2 }.average()), Modifier.weight(1f))
             }
             Text("¹ Сумма страниц из карточек книг, где это число известно.", color = secondaryInk,
                 style = MaterialTheme.typography.labelSmall, modifier = Modifier.padding(top = 8.dp))
@@ -102,7 +102,7 @@ fun ProfileScreen(
                             Text(book.title, color = profileInk, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis)
                             Text(book.author, color = secondaryInk, maxLines = 1)
                             Text(listOfNotNull(book.finishedAt?.let { DateFormat.getDateInstance(DateFormat.MEDIUM).format(Date(it)) },
-                                book.pages?.let { "$it стр." }, book.rating.takeIf { it > 0f }?.let { "★ ${it.toInt()}" }).joinToString(" · "),
+                                book.pages?.let { "$it стр." }, book.rating.takeIf { it > 0f }?.let { "★ ${(it * 2).toInt()} / 10" }).joinToString(" · "),
                                 style = MaterialTheme.typography.labelMedium, color = secondaryInk)
                         }
                     }
@@ -151,7 +151,7 @@ fun ProfileScreen(
             ProfileAction("▤", "Открыть библиотеку", "Все книги и избранное", onOpenLibrary)
             Spacer(Modifier.height(24.dp))
             Text("Каталоги", style = MaterialTheme.typography.titleLarge, color = profileInk, fontWeight = FontWeight.SemiBold)
-            Text("Поиск: Open Library, Project Gutenberg, Флибуста. Доступность книги и права на неё зависят от источника и страны.",
+            Text("Поиск: Флибуста, Open Library, Google Books, Internet Archive, Викитека, Project Gutenberg и OPDS. Доступность книги и права на неё зависят от источника и страны.",
                 style = MaterialTheme.typography.bodyMedium, color = secondaryInk, modifier = Modifier.padding(top = 8.dp))
         }
         Spacer(Modifier.height(24.dp))

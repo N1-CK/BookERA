@@ -71,6 +71,9 @@ class PdfReaderPlugin : ReaderPlugin {
             }
             return
         }
+        com.example.bookera.ui.reader.ReadingSession()
+        val activityStore = remember { com.example.bookera.data.local.ReadingActivityStore.get(context) }
+        com.example.bookera.ui.theme.SystemBars(MaterialTheme.colorScheme.background)
         val pager = rememberPagerState(initialPage = prefs.getInt("page_$bookId", 0).coerceIn(0, count - 1), pageCount = { count })
         val scope = rememberCoroutineScope()
         var showBookmarks by remember { mutableStateOf(false) }
@@ -80,7 +83,10 @@ class PdfReaderPlugin : ReaderPlugin {
         var offset by remember { mutableStateOf(Offset.Zero) }
         val toolbarInk = MaterialTheme.colorScheme.onSurface
         LaunchedEffect(pager.currentPage) { scale = 1f; offset = Offset.Zero }
-        LaunchedEffect(pager.settledPage) { prefs.edit().putInt("page_$bookId", pager.settledPage).apply() }
+        LaunchedEffect(pager.settledPage) {
+            prefs.edit().putInt("page_$bookId", pager.settledPage).apply()
+            activityStore.remember(bookId, pager.settledPage.toFloat() / (count - 1).coerceAtLeast(1))
+        }
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
             Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onBack) { Text("← Назад", color = toolbarInk) }

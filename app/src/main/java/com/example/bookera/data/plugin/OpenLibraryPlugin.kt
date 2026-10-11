@@ -1,68 +1,37 @@
 package com.example.bookera.data.plugin
 
-import com.example.bookera.data.network.ApiClient
-import com.example.bookera.data.network.dto.BookDoc
-import com.example.bookera.data.network.toBook
-import java.io.File
 import com.example.bookera.data.model.BookSearchQuery
+import com.example.bookera.data.network.CatalogHttp
+import com.example.bookera.data.network.catalogResult
+import com.google.gson.JsonParser
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.delay
 
-class OpenLibraryPlugin : DownloadPlugin {
+class OpenLibraryPlugin : PublicCatalogPlugin() {
     override val id = "openlibrary"
     override val name = "Open Library"
-    override val version = "1.0.0"
-    override val author = "Open Library Team"
-    override val description = "Book metadata and covers"
-
-    override suspend fun canHandle(url: String): Boolean {
-        return url.contains("openlibrary.org") || url.contains("archive.org/download")
+    override val description = "Метаданные и обложки; свободные файлы ищутся в других каталогах"
+    override val hosts = setOf("openlibrary.org")
+    companion object {
+        private val gate = Mutex()
+        private var lastRequest = 0L
     }
-
-    override suspend fun download(url: String, destination: File, onProgress: (Float) -> Unit): Result<File> {
-        return try {
-            val response = ApiClient.bookApiService.downloadBook(url)
-            destination.outputStream().use { output ->
-                response.byteStream().use { input ->
-                    val buffer = ByteArray(8192)
-                    var bytesRead: Int
-                    var totalBytes = 0L
-                    val contentLength = response.contentLength()
-
-                    while (input.read(buffer).also { bytesRead = it } != -1) {
-                        output.write(buffer, 0, bytesRead)
-                        totalBytes += bytesRead
-                        if (contentLength > 0) {
-                            onProgress(totalBytes.toFloat() / contentLength)
-                        }
-                    }
-                }
-            }
-            Result.success(destination)
-        } catch (e: Exception) {
-            Result.failure(e)
-        }
-    }
-
-    override suspend fun search(query: String): Result<List<BookSearchResult>> {
-        return search(BookSearchQuery(query))
-    }
-
-    override suspend fun search(query: BookSearchQuery): Result<List<BookSearchResult>> {
-        return try {
-            val response = ApiClient.bookApiService.searchBooks(query.openLibraryQuery())
-            val results = response.docs.map { doc ->
-                BookSearchResult(
-                    id = doc.getOLWorkKey(),
-                    title = doc.title,
-                    author = doc.authorName?.joinToString(", ") ?: "Unknown Author",
-                    coverUrl = doc.getCoverUrl("M"),
-                    description = doc.getDescriptionText(),
-                    downloadUrl = "",
-                    publishedYear = doc.firstPublishYear
-                )
-            }
-            Result.success(results)
-        } catch (e: Exception) {
-            Result.failure(e)
+    override suspend fun search(query: String) = search(BookSearchQuery(text = query))
+    override suspend fun search(query: BookSearchQuery) = catalogResult {
+        gate.withLock {
+            val now = android.os.SystemClock.elapsedRealtime()
+            delay((1100L - (now - lastRequest)).coerceAtLeast(0))
+            lastRequest = android.os.SystemClock.elapsedRealtime()
+            val root = JsonParser.parseString(CatalogHttp.text(CatalogHttp.url("https://openlibrary.org/search.json",
+                "q" to query.openLibraryQuery(), "limit" to "20", "fields" to "key,title,author_name,cover_i,isbn,first_publish_year"))).asJsonObject
+            root.array("docs").map { value ->
+                val doc = value.asJsonObject
+                val cover = doc.string("cover_i").takeIf { it.isNotBlank() }
+                BookSearchResult(doc.string("key").substringAfterLast('/'), doc.string("title"),
+                    doc.string("author_name").ifBlank { "Автор не указан" },
+                    cover?.let { "https://covers.openlibrary.org/b/id/$it-M.jpg" }, null, "", id, doc.string("first_publish_year").toIntOrNull())
+            }.filter { query.matches(it.title, it.author, it.publishedYear) }
         }
     }
 }

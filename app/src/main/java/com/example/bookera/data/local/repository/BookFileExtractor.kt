@@ -23,11 +23,19 @@ object BookFileExtractor {
         )
 
         // EPUB is itself a ZIP container; it must never be unpacked as an FB2 archive.
-        if (downloadedFile.extension.equals("epub", true) && isZip(downloadedFile)) return downloadedFile
-        if (downloadedFile.extension.equals("pdf", true) && downloadedFile.inputStream().use {
+        if (isZip(downloadedFile) && ZipFile(downloadedFile).use { it.getEntry("META-INF/container.xml") != null }) {
+            val file = File(downloadedFile.parentFile, "book_$bookId.epub")
+            if (file.canonicalFile != downloadedFile.canonicalFile) downloadedFile.copyTo(file, overwrite = true)
+            return file
+        }
+        if (downloadedFile.inputStream().use {
                 val magic = ByteArray(5)
                 it.read(magic) == 5 && String(magic, Charsets.US_ASCII) == "%PDF-"
-            }) return downloadedFile
+            }) {
+            val file = File(downloadedFile.parentFile, "book_$bookId.pdf")
+            if (file.canonicalFile != downloadedFile.canonicalFile) downloadedFile.copyTo(file, overwrite = true)
+            return file
+        }
         if (downloadedFile.extension.equals("txt", true) && downloadedFile.length() > 0) return downloadedFile
 
         // Проверяем ZIP по сигнатуре
@@ -87,10 +95,7 @@ object BookFileExtractor {
                 "book_$bookId.fb2"
             )
 
-            downloadedFile.copyTo(
-                finalFile,
-                overwrite = true
-            )
+            if (downloadedFile.canonicalFile != finalFile.canonicalFile) downloadedFile.copyTo(finalFile, overwrite = true)
 
             return finalFile
         }
