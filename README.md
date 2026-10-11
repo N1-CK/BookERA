@@ -8,6 +8,8 @@ Android-библиотека с чтением FB2, EPUB, TXT и PDF.
 
 В Android Studio откройте **Settings → Build, Execution, Deployment → Build Tools → Gradle → Gradle JDK** и выберите установленный **JDK 17** (при необходимости Download JDK → 17). После этого выполните Sync Project with Gradle Files.
 
+После переключения Java/Gradle один раз выполните **Build → Clean Project** или `./gradlew clean`, чтобы убрать старые сгенерированные файлы и кеш KSP.
+
 Для терминала установите `JAVA_HOME` на каталог JDK 17:
 
 ```sh

@@ -1,6 +1,7 @@
 package com.example.bookera.data.reader
 
 import android.graphics.Typeface
+import android.graphics.text.LineBreaker
 import android.text.Layout
 import android.text.SpannableString
 import android.text.Spanned
@@ -77,7 +78,7 @@ internal suspend fun reflow(sections: List<ReadingPage>, width: Int, height: Int
             val slice = section.text.substring(start, end)
             val layout = StaticLayout.Builder.obtain(slice, 0, slice.length, paint, width.coerceAtLeast(1))
                 .setAlignment(Layout.Alignment.ALIGN_NORMAL).setIncludePad(false)
-                .setBreakStrategy(Layout.BREAK_STRATEGY_SIMPLE).setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+                .setBreakStrategy(LineBreaker.BREAK_STRATEGY_SIMPLE).setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
                 .setLineSpacing(fontPx * .52f, 1f).build()
             var line = 0
             while (line + 1 < layout.lineCount && layout.getLineBottom(line + 1) <= height) line++
@@ -143,10 +144,12 @@ internal fun PagedTextReader(title: String, bookId: Long, pages: List<ReadingPag
         var start = 0
         pages.map { section -> (section.chapter to start).also { start += section.text.length + 1 } }
     }
-    val searchResults by produceState<List<Pair<String, Int>>>(emptyList(), search, pages, dialog) {
-        if (dialog != "search" || search.trim().length < 2) { value = emptyList(); return@produceState }
+    var searchResults by remember { mutableStateOf<List<Pair<String, Int>>>(emptyList()) }
+    LaunchedEffect(search, pages, dialog) {
+        searchResults = emptyList()
+        if (dialog != "search" || search.trim().length < 2) return@LaunchedEffect
         delay(200)
-        value = withContext(Dispatchers.Default) {
+        searchResults = withContext(Dispatchers.Default) {
             val found = mutableListOf<Pair<String, Int>>()
             var base = 0
             val query = search.trim()
@@ -302,7 +305,7 @@ private fun SelectablePage(page: LaidPage, font: ReaderFont, fontPx: Float, ink:
         TextView(context).apply {
             setPadding(0, 0, 0, 0)
             includeFontPadding = false
-            breakStrategy = Layout.BREAK_STRATEGY_SIMPLE
+            breakStrategy = LineBreaker.BREAK_STRATEGY_SIMPLE
             hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
             setTextIsSelectable(true)
             customSelectionActionModeCallback = object : ActionMode.Callback {
