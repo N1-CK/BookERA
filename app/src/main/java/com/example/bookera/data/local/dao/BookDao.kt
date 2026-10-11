@@ -52,6 +52,12 @@ interface BookDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertOrUpdate(book: Book)
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertAll(books: List<Book>)
+
+    @Query("SELECT * FROM books WHERE id IN (:ids)")
+    suspend fun getByIds(ids: List<Long>): List<Book>
+
     @Query("UPDATE books SET rating = :rating WHERE id = :bookId")
     suspend fun updateRating(bookId: Long, rating: Float)
 

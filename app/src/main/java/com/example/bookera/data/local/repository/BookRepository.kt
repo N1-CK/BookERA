@@ -23,12 +23,23 @@ import java.util.UUID
 import java.util.zip.ZipFile
 import org.jsoup.Jsoup
 import org.jsoup.parser.Parser
+import com.example.bookera.data.db.AppDatabase
+import com.example.bookera.data.local.reader.importLegacyNotes
+import com.example.bookera.data.model.BookSearchQuery
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.ensureActive
+import kotlin.coroutines.coroutineContext
 
 class BookRepository(
     private val bookDao: BookDao,
     private val context: Context
 ) {
+    val notes = AppDatabase.getDatabase(context).readerNoteDao()
+    suspend fun migrateNotes() = importLegacyNotes(context, bookDao.getAllBooks().first(), notes)
 
+    private val searchCache = object : LinkedHashMap<BookSearchQuery, Pair<Long, List<BookSearchResult>>>(16, .75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<BookSearchQuery, Pair<Long, List<BookSearchResult>>>) = size > 12
+    }
     private val coverSlots = Semaphore(2)
     private val attemptedCovers = mutableSetOf<Long>()
 
@@ -76,8 +87,11 @@ class BookRepository(
     suspend fun setRead(bookId: Long, read: Boolean) =
         bookDao.setRead(bookId, read, if (read) System.currentTimeMillis() else null)
 
-    suspend fun delete(book: Book) =
+    suspend fun delete(book: Book) {
         bookDao.delete(book)
+        notes.deleteBook(book.id)
+        synchronized(searchCache) { searchCache.clear() }
+    }
 
     suspend fun removeFromLibrary(book: Book) = withContext(Dispatchers.IO) {
         book.localFilePath?.let { path ->
@@ -90,7 +104,7 @@ class BookRepository(
             val file = File(path).canonicalFile
             if (file.parentFile == coversDir) file.delete()
         }
-        bookDao.delete(book)
+        delete(book)
     }
 
     suspend fun importBook(uri: Uri): Result<Book> = withContext(Dispatchers.IO) {
@@ -132,9 +146,12 @@ class BookRepository(
                 }
                     .contains("FictionBook", true)) { "Invalid FB2" }
                 val title = name.substringBeforeLast('.').replace('_', ' ').trim().ifBlank { "Untitled" }
+                val metadata = readImportedMetadata(destination)
                 val book = Book(
                     id = -((System.currentTimeMillis() shl 12) + (UUID.randomUUID().leastSignificantBits and 4095)),
-                    title = title, author = "My files", coverUrl = if (extension == "epub") extractEpubCover(destination) else null,
+                    title = metadata?.title?.takeIf { it.isNotBlank() } ?: title,
+                    author = metadata?.author ?: "My files", publishedYear = metadata?.year,
+                    coverUrl = if (extension == "epub") extractEpubCover(destination) else null,
                     localFilePath = destination.absolutePath,
                     isDownloaded = true, genre = "My books"
                 )
@@ -209,45 +226,33 @@ class BookRepository(
     // ПОИСК ЧЕРЕЗ ПЛАГИНЫ
     // ============================================================
 
-    suspend fun searchWithPlugins(
-        query: String
-    ): Result<List<BookSearchResult>> =
-        withContext(Dispatchers.IO) {
-
-            runCatching {
-
-                val results =
-                    pluginManager.searchAllPlugins(query)
-
-                results.forEachIndexed { index, result ->
-
-                    val id = "${result.pluginId}:${result.id}".hashCode().toLong()
-
-                    val existing =
-                        bookDao.getBookById(id)
-
-                    if (existing == null || existing.coverUrl.isNullOrBlank()) {
-
-                        val book =
-                            Book(
-                                id = id,
-                                title = result.title,
-                                author = result.author,
-                                description = result.description,
-                                coverUrl = result.coverUrl ?: existing?.coverUrl
-                                    ?: if (index < 8) lookupCover(result.title, result.author) else null,
-                                downloadUrl = result.downloadUrl
-                            )
-                        bookDao.insertOrUpdate(existing?.copy(
-                            coverUrl = book.coverUrl,
-                            downloadUrl = result.downloadUrl.ifBlank { existing?.downloadUrl.orEmpty() }
-                        ) ?: book)
-                    }
-                }
-
-                results
+    suspend fun searchWithPlugins(query: BookSearchQuery): Result<List<BookSearchResult>> = withContext(Dispatchers.IO) {
+        try {
+            val cached = synchronized(searchCache) { searchCache[query] }
+            if (cached != null && System.currentTimeMillis() - cached.first < 120_000L) {
+                return@withContext Result.success(cached.second)
             }
-        }
+            val results = pluginManager.searchAllPlugins(query) { results ->
+                coroutineContext.ensureActive()
+                val ids = results.map { "${it.pluginId}:${it.id}".hashCode().toLong() }
+                val existing = bookDao.getByIds(ids).associateBy { it.id }
+                val books = results.mapIndexed { index, result ->
+                    val old = existing[ids[index]]
+                    old?.copy(coverUrl = result.coverUrl ?: old.coverUrl,
+                        publishedYear = result.publishedYear ?: old.publishedYear,
+                        downloadUrl = result.downloadUrl.ifBlank { old.downloadUrl.orEmpty() })
+                        ?: Book(id = ids[index], title = result.title, author = result.author,
+                            description = result.description, coverUrl = result.coverUrl,
+                            downloadUrl = result.downloadUrl, publishedYear = result.publishedYear)
+                }
+                // Publish each source as it finishes; cover lookups run only for visible cards.
+                bookDao.insertAll(books)
+            }
+            if (results.isNotEmpty()) synchronized(searchCache) { searchCache[query] = System.currentTimeMillis() to results }
+            Result.success(results)
+        } catch (e: CancellationException) { throw e }
+        catch (e: Exception) { Result.failure(e) }
+    }
 
 
     // ============================================================

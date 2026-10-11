@@ -22,6 +22,11 @@ import kotlinx.coroutines.delay
 import androidx.compose.runtime.Composable
 import com.example.bookera.data.reader.ReaderManager
 import com.example.bookera.data.reader.ReaderPlugin
+import com.example.bookera.data.model.BookSearchQuery
+import com.example.bookera.data.local.reader.ReaderNote
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.flow.flowOn
 
 class BookViewModel(private val repository: BookRepository) : ViewModel() {
 
@@ -33,6 +38,12 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
+    private val _searchOptions = MutableStateFlow(BookSearchQuery())
+    val searchOptions = _searchOptions.asStateFlow()
+    val notes = repository.notes.observeAll()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
+
+    fun deleteNote(note: ReaderNote) { viewModelScope.launch { repository.notes.delete(note.id) } }
 
     private val _searchResults = MutableStateFlow<List<BookSearchResult>>(emptyList())
     val searchResults: StateFlow<List<BookSearchResult>> = _searchResults.asStateFlow()
@@ -65,18 +76,15 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5000), emptyList())
 
     val books: StateFlow<List<Book>> = combine(
-        repository.getAllBooks(),
-        _searchQuery
-    ) { allBooks, query ->
-        if (query.isBlank()) {
+        allBooks,
+        _searchOptions
+    ) { allBooks, options ->
+        if (!options.isActive) {
             allBooks
         } else {
-            allBooks.filter { book ->
-                book.title.contains(query, ignoreCase = true) ||
-                        book.author.contains(query, ignoreCase = true)
-            }
+            allBooks.filter(options::matches)
         }
-    }.stateIn(
+    }.flowOn(Dispatchers.Default).stateIn(
         viewModelScope,
         SharingStarted.WhileSubscribed(5000),
         emptyList()
@@ -88,7 +96,7 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
     init {
         // Просто загружаем плагины - книги уже есть в БД
         loadPlugins()
-        viewModelScope.launch { repository.enrichMissingCovers() }
+        viewModelScope.launch { repository.migrateNotes() }
     }
 
     private fun loadPlugins() {
@@ -101,23 +109,34 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
 
     fun searchBooks(query: String) {
         _searchQuery.value = query
+        applySearch(_searchOptions.value.copy(text = query))
+    }
+
+    fun applySearch(options: BookSearchQuery) {
+        _searchOptions.value = options
+        _searchQuery.value = options.text
         searchJob?.cancel()
-        if (query.isNotBlank()) {
+        _isLoading.value = false
+        _error.value = null
+        if (options.isActive) {
             searchJob = viewModelScope.launch {
-                delay(450)
+                delay(300)
                 _isLoading.value = true
                 _error.value = null
                 try {
-                    val pluginResult = repository.searchWithPlugins(query)
+                    val pluginResult = repository.searchWithPlugins(options)
                     pluginResult.onSuccess { results ->
                         _searchResults.value = results
                     }.onFailure { error ->
-                        _error.value = "Search failed: ${error.message}"
+                        _error.value = error.message ?: "Не удалось выполнить поиск"
                     }
+                } catch (e: CancellationException) {
+                    throw e
                 } catch (e: Exception) {
-                    _error.value = "Search failed: ${e.message}"
+                    _error.value = e.message ?: "Не удалось выполнить поиск"
+                } finally {
+                    if (_searchOptions.value == options) _isLoading.value = false
                 }
-                _isLoading.value = false
             }
         } else {
             _searchResults.value = emptyList()
