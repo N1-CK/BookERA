@@ -9,6 +9,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.CancellationException
+import com.example.bookera.data.model.BookSearchQuery
+import java.util.concurrent.atomic.AtomicInteger
 
 class PluginManager(private val context: Context) {
 
@@ -28,14 +31,24 @@ class PluginManager(private val context: Context) {
 
     fun getAllPlugins(): List<DownloadPlugin> = plugins.values.toList()
 
-    suspend fun searchAllPlugins(query: String): List<BookSearchResult> = coroutineScope {
-        plugins.values.map { plugin -> async(Dispatchers.IO) {
-            withTimeoutOrNull(8_000L) {
-                runCatching { plugin.search(query).getOrThrow() }
-                    .onFailure { Log.e(TAG, "${plugin.name}: ${it.message}") }
-                    .getOrDefault(emptyList()).map { it.copy(pluginId = plugin.id) }
+    suspend fun searchAllPlugins(query: BookSearchQuery, onResults: suspend (List<BookSearchResult>) -> Unit): List<BookSearchResult> = coroutineScope {
+        val completed = AtomicInteger(0)
+        val sources = plugins.values.filter { query.lookupText.isNotBlank() || it.id == "openlibrary" }
+        val allResults = sources.map { plugin -> async(Dispatchers.IO) {
+            val results = withTimeoutOrNull(8_000L) {
+                try {
+                    val found = plugin.search(query).getOrThrow()
+                    completed.incrementAndGet()
+                    found.map { it.copy(pluginId = plugin.id) }
+                }
+                catch (e: CancellationException) { throw e }
+                catch (e: Exception) { Log.e(TAG, "${plugin.name}: ${e.message}"); emptyList() }
             }.orEmpty()
+            if (results.isNotEmpty()) onResults(results)
+            results
         } }.awaitAll().flatten()
+        check(completed.get() > 0) { "Каталоги недоступны. Проверьте подключение и попробуйте снова." }
+        allResults
     }
 
     suspend fun downloadWithPlugin(

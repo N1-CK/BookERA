@@ -67,11 +67,11 @@ fun BookDetailScreen(bookId: Long, viewModel: BookViewModel, onNavigateBack: () 
                     viewModel.toggleFavorite(current.id, !current.isFavorite)
                     book = current.copy(isFavorite = !current.isFavorite)
                 }) { Icon(if (current.isFavorite) Icons.Filled.Favorite else Icons.Outlined.FavoriteBorder,
-                    "Избранное", tint = Color(0xFFBB7958)) }
+                    "Избранное", tint = MaterialTheme.colorScheme.primary) }
                 Text("Моя оценка")
                 (1..5).forEach { star -> Text("★", Modifier.clickable {
                     viewModel.updateRating(current.id, star.toFloat()); book = current.copy(rating = star.toFloat())
-                }.padding(3.dp), color = if (current.rating >= star) Color(0xFF90543A) else MaterialTheme.colorScheme.onSurfaceVariant) }
+                }.padding(3.dp), color = if (current.rating >= star) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant) }
             }
             Spacer(Modifier.height(12.dp))
             OutlinedButton(onClick = {

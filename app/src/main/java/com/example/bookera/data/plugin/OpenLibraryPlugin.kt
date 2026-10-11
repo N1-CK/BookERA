@@ -4,6 +4,7 @@ import com.example.bookera.data.network.ApiClient
 import com.example.bookera.data.network.dto.BookDoc
 import com.example.bookera.data.network.toBook
 import java.io.File
+import com.example.bookera.data.model.BookSearchQuery
 
 class OpenLibraryPlugin : DownloadPlugin {
     override val id = "openlibrary"
@@ -42,8 +43,12 @@ class OpenLibraryPlugin : DownloadPlugin {
     }
 
     override suspend fun search(query: String): Result<List<BookSearchResult>> {
+        return search(BookSearchQuery(query))
+    }
+
+    override suspend fun search(query: BookSearchQuery): Result<List<BookSearchResult>> {
         return try {
-            val response = ApiClient.bookApiService.searchBooks(query)
+            val response = ApiClient.bookApiService.searchBooks(query.openLibraryQuery())
             val results = response.docs.map { doc ->
                 BookSearchResult(
                     id = doc.getOLWorkKey(),
@@ -51,7 +56,8 @@ class OpenLibraryPlugin : DownloadPlugin {
                     author = doc.authorName?.joinToString(", ") ?: "Unknown Author",
                     coverUrl = doc.getCoverUrl("M"),
                     description = doc.getDescriptionText(),
-                    downloadUrl = ""
+                    downloadUrl = "",
+                    publishedYear = doc.firstPublishYear
                 )
             }
             Result.success(results)

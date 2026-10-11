@@ -16,6 +16,7 @@ import org.jsoup.Jsoup
 import retrofit2.Response
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import com.example.bookera.data.network.awaitResponse
 
 interface FlibustaApiService {
     @Streaming
@@ -80,7 +81,7 @@ class FlibustaPlugin : DownloadPlugin {
                     .addHeader("Upgrade-Insecure-Requests", "1")
                     .build()
 
-                val response = okHttpClient.newCall(request).execute()
+                okHttpClient.newCall(request).awaitResponse().use { response ->
                 if (response.isSuccessful) {
                     val body = response.body
                     if (body != null) {
@@ -92,6 +93,7 @@ class FlibustaPlugin : DownloadPlugin {
                 } else {
                     Log.e(TAG, "Failed to fetch HTML: ${response.code}")
                     null
+                }
                 }
             } catch (e: Exception) {
                 Log.e(TAG, "Error fetching HTML: ${e.message}", e)
