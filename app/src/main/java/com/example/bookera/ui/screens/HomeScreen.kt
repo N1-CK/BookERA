@@ -108,10 +108,10 @@ fun HomeScreen(books: List<Book>, store: ReadingActivityStore, notes: List<Reade
             if (recent.isEmpty()) Text("Откройте книгу — здесь появятся пять последних недочитанных историй.", color = MaterialTheme.colorScheme.onSurfaceVariant)
             else LazyRow(horizontalArrangement = Arrangement.spacedBy(14.dp)) {
                 items(recent, key = { it.first.id }) { (book, progress) ->
-                    Card(Modifier.width(146.dp).clickable { onRead(book.id) }, shape = RoundedCornerShape(24.dp),
+                    Card(Modifier.width(134.dp).clickable { onRead(book.id) }, shape = RoundedCornerShape(24.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)) {
                         Column(Modifier.padding(12.dp)) {
-                            CoverArtwork(book, Modifier.fillMaxWidth().height(168.dp))
+                            CoverArtwork(book, Modifier.fillMaxWidth().height(142.dp))
                             Text(book.title, color = HomeInk, fontWeight = FontWeight.SemiBold, maxLines = 2, overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.padding(top = 12.dp).heightIn(min = 42.dp))
                             Text(book.author, color = MaterialTheme.colorScheme.onSurfaceVariant, maxLines = 1, overflow = TextOverflow.Ellipsis, style = MaterialTheme.typography.bodySmall)
@@ -140,21 +140,21 @@ fun HomeScreen(books: List<Book>, store: ReadingActivityStore, notes: List<Reade
 @Composable
 private fun ContinueCard(book: Book, progress: Float, action: () -> Unit) {
     val animated by animateFloatAsState(progress, label = "readingProgress")
-    Card(Modifier.fillMaxWidth().animateContentSize(), shape = RoundedCornerShape(30.dp), colors = CardDefaults.cardColors(containerColor = HeroViolet)) {
+    Card(Modifier.fillMaxWidth().animateContentSize(), shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = HeroViolet)) {
         Box {
             OrbitArtwork(Modifier.matchParentSize())
-            Column(Modifier.padding(22.dp)) {
+            Column(Modifier.padding(18.dp)) {
                 Text("ЧИТАЛИ РАНЕЕ · ВЕРНЁМСЯ?", color = Color(0xFFE5DDFF), style = MaterialTheme.typography.labelMedium)
-                Row(Modifier.padding(vertical = 20.dp), verticalAlignment = Alignment.CenterVertically) {
-                    CoverArtwork(book, Modifier.size(100.dp, 145.dp).rotate(-5f))
-                    Column(Modifier.weight(1f).padding(start = 20.dp)) {
-                        Text(book.title, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.headlineSmall,
-                            maxLines = 3, overflow = TextOverflow.Ellipsis)
+                Row(Modifier.padding(vertical = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                    CoverArtwork(book, Modifier.size(76.dp, 108.dp).rotate(-5f))
+                    Column(Modifier.weight(1f).padding(start = 16.dp)) {
+                        Text(book.title, color = Color.White, fontWeight = FontWeight.Bold, style = MaterialTheme.typography.titleLarge,
+                            maxLines = 2, overflow = TextOverflow.Ellipsis)
                         Text(book.author, color = Color(0xFFE5DDFF), maxLines = 2, modifier = Modifier.padding(top = 6.dp))
-                        Text("${(animated * 100).toInt()}% прочитано", color = Lime, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 14.dp))
+                        Text("${(animated * 100).toInt()}% прочитано", color = Lime, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 8.dp))
                     }
                 }
-                Button(onClick = action, modifier = Modifier.fillMaxWidth().heightIn(min = 54.dp), shape = RoundedCornerShape(18.dp),
+                Button(onClick = action, modifier = Modifier.fillMaxWidth().heightIn(min = 48.dp), shape = RoundedCornerShape(18.dp),
                     colors = ButtonDefaults.buttonColors(containerColor = Lime, contentColor = AccentInk)) {
                     Text("Продолжить чтение", fontWeight = FontWeight.Bold); Spacer(Modifier.width(12.dp)); Icon(Icons.AutoMirrored.Filled.ArrowForward, null)
                 }

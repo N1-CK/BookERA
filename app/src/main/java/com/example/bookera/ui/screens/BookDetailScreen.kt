@@ -42,7 +42,7 @@ fun BookDetailScreen(bookId: Long, viewModel: BookViewModel, onNavigateBack: () 
     var progress by remember(bookId) { mutableFloatStateOf(0f) }
     var message by remember(bookId) { mutableStateOf<String?>(null) }
     var rating by remember { mutableStateOf(false) }
-    LaunchedEffect(bookId) { initial = viewModel.getBookById(bookId) }
+    LaunchedEffect(bookId) { initial = viewModel.getBookById(bookId); initial?.let { viewModel.resolveCover(it) } }
     SystemBars(HomePaper)
 
     fun download(source: String, link: DownloadLink) {
@@ -76,10 +76,10 @@ fun BookDetailScreen(bookId: Long, viewModel: BookViewModel, onNavigateBack: () 
         else Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(22.dp),
             horizontalAlignment = Alignment.CenterHorizontally) {
             Surface(color = Lavender, shape = RoundedCornerShape(32.dp), modifier = Modifier.fillMaxWidth()) {
-                Box(Modifier.padding(24.dp), contentAlignment = Alignment.Center) { CoverArtwork(current, Modifier.size(174.dp, 248.dp)) }
+                Box(Modifier.padding(18.dp), contentAlignment = Alignment.Center) { CoverArtwork(current, Modifier.size(138.dp, 196.dp)) }
             }
             Spacer(Modifier.height(22.dp))
-            Text(current.title, style = MaterialTheme.typography.headlineMedium, fontWeight = FontWeight.Bold, color = HomeInk)
+            Text(current.title, style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.Bold, color = HomeInk)
             Text(current.author, color = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.padding(top = 6.dp))
             current.publishedYear?.let { Text(it.toString(), color = MaterialTheme.colorScheme.onSurfaceVariant) }
             Spacer(Modifier.height(20.dp))

@@ -20,6 +20,10 @@ import kotlinx.coroutines.CancellationException
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.*
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -44,6 +48,9 @@ class PdfReaderPlugin : ReaderPlugin {
     @Composable
     override fun ReaderScreen(filePath: String, bookId: Long, onBack: () -> Unit) {
         val context = LocalContext.current
+        var fullscreen by rememberSaveable(bookId) { mutableStateOf(false) }
+        com.example.bookera.ui.theme.ReaderFullscreen(fullscreen)
+        BackHandler(enabled = fullscreen) { fullscreen = false }
         val prefs = remember { context.getSharedPreferences("reader_settings", 0) }
         val db = remember { AppDatabase.getDatabase(context) }
         val dao = remember { db.readerNoteDao() }
@@ -88,9 +95,10 @@ class PdfReaderPlugin : ReaderPlugin {
             activityStore.remember(bookId, pager.settledPage.toFloat() / (count - 1).coerceAtLeast(1))
         }
         Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
-            Row(Modifier.fillMaxWidth().padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            if (!fullscreen) Row(Modifier.fillMaxWidth().padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onBack) { Text("← Назад", color = toolbarInk) }
                 Spacer(Modifier.weight(1f))
+                IconButton(onClick = { fullscreen = true }) { Icon(Icons.Outlined.Fullscreen, "Полный экран · коснитесь страницы для выхода", tint = toolbarInk) }
                 TextButton(onClick = { showSettings = true }) { Text("Вид", color = toolbarInk) }
                 TextButton(onClick = { showBookmarks = true }) { Text("Метки", color = toolbarInk) }
                 TextButton(onClick = {
@@ -131,7 +139,7 @@ class PdfReaderPlugin : ReaderPlugin {
                 }
                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                     bitmap?.let { Image(it.asImageBitmap(), "Страница ${index + 1}", Modifier.fillMaxSize()
-                        .pointerInput(index) { detectTapGestures(onDoubleTap = { scale = if (scale > 1f) 1f else 2f; offset = Offset.Zero }) }
+                        .pointerInput(index, fullscreen) { detectTapGestures(onTap = { if (fullscreen) fullscreen = false }, onDoubleTap = { scale = if (scale > 1f) 1f else 2f; offset = Offset.Zero }) }
                         .transformable(transform).graphicsLayer(scaleX = scale, scaleY = scale,
                             translationX = offset.x, translationY = offset.y), contentScale = ContentScale.Fit) }
                         ?: if (error == null) CircularProgressIndicator() else Text(error.orEmpty())
@@ -141,6 +149,7 @@ class PdfReaderPlugin : ReaderPlugin {
                 beyondViewportPageCount = 1) { renderPage(it) }
             else HorizontalPager(state = pager, modifier = Modifier.weight(1f), userScrollEnabled = scale <= 1.01f,
                 beyondViewportPageCount = 1) { renderPage(it) }
+            if (!fullscreen) {
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = { scope.launch { pager.animateScrollToPage((pager.currentPage - 1).coerceAtLeast(0)) } }) { Text("←", color = toolbarInk) }
                 Spacer(Modifier.weight(1f))
@@ -158,6 +167,7 @@ class PdfReaderPlugin : ReaderPlugin {
                 onValueChangeFinished = { scope.launch { pager.scrollToPage(sliderPage.toInt().coerceIn(0, count - 1)) } },
                 valueRange = 0f..(count - 1).coerceAtLeast(1).toFloat(), modifier = Modifier.padding(horizontal = 20.dp),
                 colors = SliderDefaults.colors(thumbColor = toolbarInk, activeTrackColor = toolbarInk))
+            }
         }
         if (showSettings) AlertDialog(onDismissRequest = { showSettings = false }, title = { Text("Чтение PDF") },
             text = { Column {

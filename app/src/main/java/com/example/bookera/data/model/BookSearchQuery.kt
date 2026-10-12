@@ -11,14 +11,20 @@ data class BookSearchQuery(
     val isActive get() = text.isNotBlank() || author.isNotBlank() || year != null
     val lookupText get() = listOf(text.trim(), author.trim()).filter { it.isNotEmpty() }.joinToString(" ")
 
+    private fun authorMatches(value: String, query: String): Boolean {
+        val author = value.lowercase().replace('ё', 'е')
+        return query.lowercase().replace('ё', 'е').split(Regex("[^\\p{L}\\p{N}]+"))
+            .filter { it.isNotBlank() }.all { it in author }
+    }
+
     fun matches(title: String, authorName: String, publishedYear: Int?): Boolean {
         val q = text.trim()
         val textMatches = q.isEmpty() || when (field) {
-            SearchField.ALL -> title.contains(q, true) || authorName.contains(q, true)
+            SearchField.ALL -> title.contains(q, true) || authorMatches(authorName, q)
             SearchField.TITLE -> title.contains(q, true)
-            SearchField.AUTHOR -> authorName.contains(q, true)
+            SearchField.AUTHOR -> authorMatches(authorName, q)
         }
-        return textMatches && authorName.contains(author.trim(), true) && (year == null || year == publishedYear)
+        return textMatches && authorMatches(authorName, author) && (year == null || year == publishedYear)
     }
 
     fun matches(book: Book) = matches(book.title, book.author, book.publishedYear)

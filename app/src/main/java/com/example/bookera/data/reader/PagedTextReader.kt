@@ -10,6 +10,11 @@ import android.text.TextPaint
 import android.text.style.BackgroundColorSpan
 import android.util.TypedValue
 import android.view.ActionMode
+import android.view.GestureDetector
+import android.view.MotionEvent
+import androidx.activity.compose.BackHandler
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.material.icons.outlined.Fullscreen
 import android.view.Menu
 import android.view.MenuItem
 import android.widget.TextView
@@ -68,26 +73,42 @@ internal enum class ReaderFont(val label: String, val family: String) {
 /** The same typeface, line spacing and break strategy are used by layout and display. */
 internal suspend fun reflow(sections: List<ReadingPage>, width: Int, height: Int, fontPx: Float, font: ReaderFont): List<LaidPage> {
     val paint = TextPaint(android.graphics.Paint.ANTI_ALIAS_FLAG).apply { textSize = fontPx; typeface = font.typeface }
+    val document = sections.joinToString("\n") { it.text }
+    val boundaries = mutableListOf<Pair<Int, String>>()
+    var offset = 0
+    sections.forEach { boundaries += offset to it.chapter; offset += it.text.length + 1 }
     val result = mutableListOf<LaidPage>()
-    var base = 0
-    sections.forEach { section ->
-        var start = 0
-        while (start < section.text.length) {
+    var start = 0
+    var chapterIndex = 0
+    while (start < document.length) {
+        coroutineContext.ensureActive()
+        val windowStart = start
+        val end = (start + 16000).coerceAtMost(document.length)
+        val slice = document.substring(windowStart, end)
+        val layout = StaticLayout.Builder.obtain(slice, 0, slice.length, paint, width.coerceAtLeast(1))
+            .setAlignment(Layout.Alignment.ALIGN_NORMAL).setIncludePad(false)
+            .setBreakStrategy(LineBreaker.BREAK_STRATEGY_SIMPLE).setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
+            .setLineSpacing(fontPx * .4f, 1f).build()
+        while (start < end) {
             coroutineContext.ensureActive()
-            val end = (start + 6000).coerceAtMost(section.text.length)
-            val slice = section.text.substring(start, end)
-            val layout = StaticLayout.Builder.obtain(slice, 0, slice.length, paint, width.coerceAtLeast(1))
-                .setAlignment(Layout.Alignment.ALIGN_NORMAL).setIncludePad(false)
-                .setBreakStrategy(LineBreaker.BREAK_STRATEGY_SIMPLE).setHyphenationFrequency(Layout.HYPHENATION_FREQUENCY_NONE)
-                .setLineSpacing(fontPx * .52f, 1f).build()
-            var line = 0
-            while (line + 1 < layout.lineCount && layout.getLineBottom(line + 1) <= height) line++
-            val length = layout.getLineEnd(line).coerceAtLeast(1)
-            result.add(LaidPage(section.chapter, section.text.substring(start, start + length), base + start))
-            start += length
+            val firstLine = layout.getLineForOffset(start - windowStart)
+            val bottom = layout.getLineTop(firstLine) + height
+            var low = firstLine
+            var high = layout.lineCount - 1
+            while (low < high) {
+                val middle = (low + high + 1) / 2
+                if (layout.getLineBottom(middle) <= bottom) low = middle else high = middle - 1
+            }
+            // Do not emit a short page just because a layout window ends here.
+            if (end < document.length && low >= layout.lineCount - 2 && start > windowStart) break
+            var pageEnd = windowStart + layout.getLineEnd(low)
+            pageEnd = pageEnd.coerceAtLeast(start + 1)
+            while (pageEnd < document.length && document[pageEnd].isWhitespace()) pageEnd++
+            while (chapterIndex + 1 < boundaries.size && boundaries[chapterIndex + 1].first <= start) chapterIndex++
+            result += LaidPage(boundaries.getOrNull(chapterIndex)?.second.orEmpty(), document.substring(start, pageEnd), start)
+            start = pageEnd
             require(result.size <= 20000) { "Слишком много страниц" }
         }
-        base += section.text.length + 1
     }
     return result
 }
@@ -102,6 +123,9 @@ internal fun PagedTextReader(title: String, bookId: Long, pages: List<ReadingPag
     val context = LocalContext.current
     com.example.bookera.ui.reader.ReadingSession()
     val activityStore = remember { com.example.bookera.data.local.ReadingActivityStore.get(context) }
+    var fullscreen by rememberSaveable(bookId) { mutableStateOf(false) }
+    com.example.bookera.ui.theme.ReaderFullscreen(fullscreen)
+    BackHandler(enabled = fullscreen) { fullscreen = false }
     val prefs = remember { context.getSharedPreferences("reader_settings", 0) }
     val db = remember { AppDatabase.getDatabase(context) }
     val noteDao = remember { db.readerNoteDao() }
@@ -172,14 +196,15 @@ internal fun PagedTextReader(title: String, bookId: Long, pages: List<ReadingPag
         }
     }
     Column(Modifier.fillMaxSize().background(paper)) {
-        Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
+        if (!fullscreen) Row(Modifier.fillMaxWidth().height(52.dp), verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Filled.ArrowBack, "Назад", tint = ink) }
             Text(bookTitle, Modifier.weight(1f), maxLines = 1, overflow = TextOverflow.Ellipsis, color = ink)
+            IconButton(onClick = { fullscreen = true }) { Icon(Icons.Outlined.Fullscreen, "Полный экран · коснитесь текста для выхода", tint = ink) }
             TextButton(onClick = { dialog = "settings" }) { Text("Aa", color = accent) }
         }
         BoxWithConstraints(Modifier.weight(1f).fillMaxWidth()) {
             val textWidth = with(density) { (maxWidth - 40.dp).roundToPx().coerceAtLeast(1) }
-            val textHeight = with(density) { (maxHeight - 44.dp).roundToPx().coerceAtLeast(1) }
+            val textHeight = with(density) { (maxHeight - if (fullscreen) 20.dp else 44.dp).roundToPx().coerceAtLeast(1) }
             val fontPx = with(density) { fontSize.sp.toPx() }
             LaunchedEffect(pages, textWidth, textHeight, fontPx, font) {
                 restoring = true
@@ -198,9 +223,9 @@ internal fun PagedTextReader(title: String, bookId: Long, pages: List<ReadingPag
             val renderPage: @Composable (Int) -> Unit = { index ->
                 laidPages.getOrNull(index)?.let { page ->
                     Column(Modifier.fillMaxSize().padding(horizontal = 20.dp, vertical = 10.dp)) {
-                        Text(page.chapter, color = muted, style = MaterialTheme.typography.labelMedium,
+                        if (!fullscreen) Text(page.chapter, color = muted, style = MaterialTheme.typography.bodyMedium,
                             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.height(24.dp))
-                        SelectablePage(page, font, fontPx, ink, notes, Modifier.fillMaxWidth().weight(1f)) { start, end, quote ->
+                        SelectablePage(page, font, fontPx, ink, notes, Modifier.fillMaxWidth().weight(1f), onTap = { if (fullscreen) fullscreen = false }) { start, end, quote ->
                             scope.launch {
                                 noteDao.save(ReaderNote(UUID.randomUUID().toString(), bookId, bookTitle,
                                     page.position + start, page.position + end, quote, page.chapter))
@@ -218,6 +243,7 @@ internal fun PagedTextReader(title: String, bookId: Long, pages: List<ReadingPag
                 if (layoutError != null) Text(layoutError.orEmpty(), color = ink) else CircularProgressIndicator(color = accent)
             }
         }
+        if (!fullscreen) {
         LinearProgressIndicator(progress = { if (laidPages.isEmpty()) 0f else (current + 1f) / laidPages.size },
             modifier = Modifier.fillMaxWidth().height(3.dp), color = accent, trackColor = paper)
         Row(Modifier.fillMaxWidth().height(48.dp), horizontalArrangement = Arrangement.SpaceEvenly, verticalAlignment = Alignment.CenterVertically) {
@@ -240,6 +266,7 @@ internal fun PagedTextReader(title: String, bookId: Long, pages: List<ReadingPag
                 scope.launch { db.bookDao().setRead(bookId, true, System.currentTimeMillis()); finished = true }
             }) { Text(if (finished) "✓" else "Готово", color = accent) }
             else IconButton(onClick = { step(1) }) { Icon(Icons.AutoMirrored.Filled.NavigateNext, "Следующая страница", tint = ink) }
+        }
         }
     }
     when (dialog) {
@@ -294,8 +321,9 @@ private fun Color.luminanceValue(): Float = .2126f * red + .7152f * green + .072
 /** Native selection exposes exact offsets; saved highlights survive page reflow. */
 @Composable
 private fun SelectablePage(page: LaidPage, font: ReaderFont, fontPx: Float, ink: Color,
-    notes: List<ReaderNote>, modifier: Modifier, onQuote: (Int, Int, String) -> Unit) {
+    notes: List<ReaderNote>, modifier: Modifier, onTap: () -> Unit, onQuote: (Int, Int, String) -> Unit) {
     val saveQuote by rememberUpdatedState(onQuote)
+    val tap by rememberUpdatedState(onTap)
     val styled = remember(page, notes) {
         SpannableString(page.text).apply {
             notes.filter { it.isQuote && it.locationType == "text" && it.position < page.position + page.text.length && it.endPosition > page.position }.forEach { note ->
@@ -312,6 +340,11 @@ private fun SelectablePage(page: LaidPage, font: ReaderFont, fontPx: Float, ink:
             breakStrategy = LineBreaker.BREAK_STRATEGY_SIMPLE
             hyphenationFrequency = Layout.HYPHENATION_FREQUENCY_NONE
             setTextIsSelectable(true)
+            val detector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
+                override fun onDown(event: MotionEvent) = true
+                override fun onSingleTapConfirmed(event: MotionEvent): Boolean { tap(); return false }
+            })
+            setOnTouchListener { _, event -> detector.onTouchEvent(event); false }
             customSelectionActionModeCallback = object : ActionMode.Callback {
                 override fun onCreateActionMode(mode: ActionMode, menu: Menu): Boolean {
                     menu.add(0, 9001, 0, "Сохранить цитату").setShowAsAction(MenuItem.SHOW_AS_ACTION_IF_ROOM)
@@ -332,7 +365,7 @@ private fun SelectablePage(page: LaidPage, font: ReaderFont, fontPx: Float, ink:
     }, update = { view ->
         view.typeface = font.typeface
         view.setTextSize(TypedValue.COMPLEX_UNIT_PX, fontPx)
-        view.setLineSpacing(fontPx * .52f, 1f)
+        view.setLineSpacing(fontPx * .4f, 1f)
         view.setTextColor(ink.toArgb())
         if (view.tag !== styled) { view.text = styled; view.tag = styled }
     })

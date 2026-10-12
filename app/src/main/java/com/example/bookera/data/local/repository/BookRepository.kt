@@ -22,6 +22,7 @@ import org.jsoup.Jsoup
 import org.jsoup.parser.Parser
 import com.example.bookera.data.network.catalogResult
 import com.example.bookera.data.plugin.CatalogSearch
+import com.example.bookera.data.plugin.AuthorSearchResult
 import com.example.bookera.data.db.AppDatabase
 import com.example.bookera.data.local.reader.importLegacyNotes
 import com.example.bookera.data.model.BookSearchQuery
@@ -36,7 +37,7 @@ class BookRepository(
     val notes = AppDatabase.getDatabase(context).readerNoteDao()
     suspend fun migrateNotes() = importLegacyNotes(context, bookDao.getAllBooks().first(), notes)
 
-    private val coverSlots = Semaphore(1)
+    private val coverSlots = Semaphore(2)
     private val sourcePrefs = context.getSharedPreferences("catalog_books", 0)
     private var coverUnavailableUntil = 0L
     private val attemptedCovers = mutableSetOf<Long>()
@@ -197,17 +198,29 @@ class BookRepository(
     }
 
     suspend fun resolveCover(book: Book) = withContext(Dispatchers.IO) {
-        if (!book.coverUrl.isNullOrBlank() || android.os.SystemClock.elapsedRealtime() < coverUnavailableUntil) return@withContext
-        val shouldLookup = synchronized(attemptedCovers) {
-            if (attemptedCovers.size >= 40) false else attemptedCovers.add(book.id)
-        }
+        val source = sourceForBook(book.id)
+        val flibusta = source == "flibusta" || book.downloadUrl?.startsWith("https://flibusta.is/b/") == true
+        if (!book.coverUrl.isNullOrBlank() || (!flibusta && android.os.SystemClock.elapsedRealtime() < coverUnavailableUntil)) return@withContext
+        val shouldLookup = synchronized(attemptedCovers) { attemptedCovers.add(book.id) }
         if (!shouldLookup) return@withContext
-        coverSlots.withPermit {
-            val cover = lookupCover(book.title, book.author)
-            if (cover != null) bookDao.getBookById(book.id)?.let { current ->
-                if (current.coverUrl.isNullOrBlank()) bookDao.insertOrUpdate(current.copy(coverUrl = cover))
+        try {
+            coverSlots.withPermit {
+                if (flibusta && !book.downloadUrl.isNullOrBlank()) {
+                    val details = pluginManager.getPlugin("flibusta")?.bookDetails(book.downloadUrl)?.getOrThrow()
+                    bookDao.getBookById(book.id)?.let { current ->
+                        val updated = current.copy(coverUrl = current.coverUrl ?: details?.coverUrl,
+                            author = details?.author ?: current.author, description = current.description ?: details?.description)
+                        if (updated != current) bookDao.insertOrUpdate(updated)
+                    }
+                } else if (book.isDownloaded) {
+                    val cover = lookupCover(book.title, book.author)
+                    if (cover != null) bookDao.getBookById(book.id)?.let { current ->
+                        if (current.coverUrl.isNullOrBlank()) bookDao.insertOrUpdate(current.copy(coverUrl = cover))
+                    }
+                }
             }
-        }
+        } catch (e: CancellationException) { synchronized(attemptedCovers) { attemptedCovers.remove(book.id) }; throw e }
+        catch (_: Exception) { /* Covers are optional; one failed page must not break search. */ }
     }
 
     private suspend fun lookupCover(title: String, author: String): String? {
@@ -233,30 +246,44 @@ class BookRepository(
             pluginManager.searchCatalogs(query) { snapshot ->
                 coroutineContext.ensureActive()
                 val fresh = snapshot.books.filter { persisted.add("${it.pluginId}:${it.id}") }
-                if (fresh.isNotEmpty()) {
-                    val ids = fresh.map { "${it.pluginId}:${it.id}".hashCode().toLong() }
-                    val existing = bookDao.getByIds(ids).associateBy { it.id }
-                    val books = fresh.mapIndexed { i, result ->
-                        val old = existing[ids[i]]
-                        old?.copy(coverUrl = old.coverUrl ?: result.coverUrl,
-                            description = old.description ?: result.description,
-                            publishedYear = result.publishedYear ?: old.publishedYear,
-                            downloadUrl = result.downloadUrl.ifBlank { old.downloadUrl.orEmpty() })
-                            ?: Book(id = ids[i], title = result.title, author = result.author,
-                                description = result.description, coverUrl = result.coverUrl,
-                                downloadUrl = result.downloadUrl, publishedYear = result.publishedYear)
-                    }
-                    bookDao.insertAll(books)
-                    sourcePrefs.edit().apply {
-                        fresh.forEachIndexed { i, result -> putString("source_${ids[i]}", result.pluginId) }
-                    }.apply()
-                }
+                persistResults(fresh)
                 onUpdate(snapshot)
             }.books
         }
     }
 
-    fun retryUnavailable() = pluginManager.retryUnavailable()
+    private suspend fun persistResults(results: List<BookSearchResult>) {
+        if (results.isEmpty()) return
+        val ids = results.map { "${it.pluginId}:${it.id}".hashCode().toLong() }
+        val existing = ids.chunked(500).flatMap { bookDao.getByIds(it) }.associateBy { it.id }
+        val books = results.mapIndexed { i, result ->
+            val old = existing[ids[i]]
+            old?.copy(author = result.author.takeUnless { it == "Автор не указан" } ?: old.author,
+                coverUrl = old.coverUrl ?: result.coverUrl, description = old.description ?: result.description,
+                publishedYear = result.publishedYear ?: old.publishedYear,
+                downloadUrl = result.downloadUrl.ifBlank { old.downloadUrl.orEmpty() })
+                ?: Book(id = ids[i], title = result.title, author = result.author, description = result.description,
+                    coverUrl = result.coverUrl, downloadUrl = result.downloadUrl, publishedYear = result.publishedYear)
+        }
+        val changed = books.filter { it != existing[it.id] }
+        if (changed.isNotEmpty()) bookDao.insertAll(changed)
+        sourcePrefs.edit().apply { results.forEachIndexed { i, r -> putString("source_${ids[i]}", r.pluginId) } }.apply()
+    }
+
+    suspend fun booksByAuthor(author: AuthorSearchResult): Result<List<BookSearchResult>> = catalogResult {
+        withContext(Dispatchers.IO) {
+            val plugin = pluginManager.getPlugin(author.pluginId) ?: error("Источник не найден")
+            val results = plugin.booksByAuthor(author).getOrThrow().map { it.copy(pluginId = plugin.id) }
+            persistResults(results)
+            results
+        }
+    }
+
+    fun retryUnavailable() {
+        pluginManager.retryUnavailable()
+        synchronized(attemptedCovers) { attemptedCovers.clear() }
+        coverUnavailableUntil = 0L
+    }
     fun close() = pluginManager.close()
     fun sourceForBook(bookId: Long): String? = sourcePrefs.getString("source_$bookId", null)
     suspend fun downloadLinks(book: Book): Pair<String, List<com.example.bookera.data.plugin.DownloadLink>>? {

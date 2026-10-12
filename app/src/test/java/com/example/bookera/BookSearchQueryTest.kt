@@ -30,4 +30,11 @@ class BookSearchQueryTest {
         assertEquals("title:\"a\\\"b\" AND author:\"c\\\\d\" AND first_publish_year:2000",
             BookSearchQuery("a\"b", SearchField.TITLE, "c\\d", 2000).openLibraryQuery())
     }
+    @Test fun fullAuthorNamesMatchDifferentNameOrderAndYo() {
+        assertTrue(BookSearchQuery(text = "Павел Алексеевич Астахов", field = com.example.bookera.data.model.SearchField.AUTHOR)
+            .matches("Книга", "Астахов, Павел Алексеевич", null))
+        assertTrue(BookSearchQuery(author = "Федор Достоевский").matches("Идиот", "Фёдор Михайлович Достоевский", 1869))
+        assertFalse(BookSearchQuery(author = "Павел Алексеевич").matches("Книга", "Павел Андреевич Астахов", null))
+    }
+
 }

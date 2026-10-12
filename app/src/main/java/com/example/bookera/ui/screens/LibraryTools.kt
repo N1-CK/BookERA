@@ -47,7 +47,7 @@ fun SourceSettingsSheet(viewModel: BookViewModel, settings: LocalSettings, onDis
                 modifier = Modifier.fillMaxWidth(), singleLine = true, visualTransformation = androidx.compose.ui.text.input.PasswordVisualTransformation())
             Text("Свой ключ помогает использовать квоту вашего Google-проекта, если общий доступ ограничен.", style = MaterialTheme.typography.bodySmall)
             Text("Добавить OPDS-каталог", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold, modifier = Modifier.padding(top = 16.dp))
-            Text("OPDS 1.x с прямыми EPUB, FB2, PDF или TXT. Если поиск не предусмотрен каталогом, проверяется его первая лента.", style = MaterialTheme.typography.bodySmall)
+            Text("OPDS 1/2: EPUB, FB2, PDF и TXT, поиск и вложенные карточки. Можно подключить свой публичный каталог.", style = MaterialTheme.typography.bodySmall)
             OutlinedTextField(name, { name = it }, label = { Text("Название") }, modifier = Modifier.fillMaxWidth().padding(top = 12.dp), singleLine = true)
             OutlinedTextField(url, { url = it }, label = { Text("https://…/opds") }, modifier = Modifier.fillMaxWidth().padding(top = 8.dp), singleLine = true)
             error?.let { Text(it, color = MaterialTheme.colorScheme.error) }

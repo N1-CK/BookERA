@@ -19,6 +19,10 @@ interface DownloadPlugin {
             results.filter { query.matches(it.title, it.author, it.publishedYear) }
         }
 
+    suspend fun searchCatalog(query: BookSearchQuery): Result<SourceResults> = search(query).map { SourceResults(it) }
+    suspend fun booksByAuthor(author: AuthorSearchResult): Result<List<BookSearchResult>> = Result.success(emptyList())
+    suspend fun bookDetails(url: String): Result<BookDetails> = Result.success(BookDetails())
+
     suspend fun findAllDownloadLinks(url: String): List<DownloadLink> = emptyList()
 }
 
@@ -37,3 +41,9 @@ data class DownloadLink(
     val url: String,
     val format: String
 )
+
+
+data class AuthorSearchResult(val id: String, val name: String, val url: String, val pluginId: String,
+    val description: String = "", val bookCount: Int? = null)
+data class SourceResults(val books: List<BookSearchResult>, val authors: List<AuthorSearchResult> = emptyList())
+data class BookDetails(val coverUrl: String? = null, val author: String? = null, val description: String? = null)

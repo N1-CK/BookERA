@@ -29,18 +29,29 @@ class Fb2ReaderPlugin : ReaderPlugin {
             runCatching { withContext(Dispatchers.IO) {
                 val parsed = Fb2Parser().parse(File(filePath))
                 val sections = mutableListOf<ReadingPage>()
+                fun blockText(block: Fb2Block): String = when (block) {
+                    is Fb2Block.Paragraph -> block.text
+                    is Fb2Block.SectionTitle -> block.text
+                    is Fb2Block.Subtitle -> block.text
+                    is Fb2Block.Epigraph -> block.text
+                    is Fb2Block.Poem -> listOfNotNull(block.title, block.verses.joinToString("\n")).joinToString("\n")
+                    is Fb2Block.Image -> "[Изображение]"
+                    is Fb2Block.EmptyLine -> ""
+                }
                 fun append(chapter: Fb2Chapter) {
-                    val text = chapter.blocks.joinToString("\n\n") { block -> when (block) {
-                        is Fb2Block.Paragraph -> block.text
-                        is Fb2Block.SectionTitle -> block.text
-                        is Fb2Block.Subtitle -> block.text
-                        is Fb2Block.Epigraph -> block.text
-                        is Fb2Block.Poem -> listOfNotNull(block.title, block.verses.joinToString("\n")).joinToString("\n")
-                        is Fb2Block.Image -> "[Изображение]"
-                        is Fb2Block.EmptyLine -> ""
-                    } }
-                    sections.addAll(paginate(chapter.title?.takeIf { it.isNotBlank() } ?: parsed.title, text))
-                    chapter.children.forEach(::append)
+                    val title = chapter.title?.takeIf { it.isNotBlank() } ?: parsed.title
+                    val text = mutableListOf<String>()
+                    fun flush() { sections.addAll(paginate(title, text.joinToString("\n\n"))); text.clear() }
+                    if (chapter.content.isEmpty()) {
+                        chapter.blocks.forEach { text += blockText(it) }; flush()
+                        chapter.children.forEach(::append)
+                    } else {
+                        chapter.content.forEach { part -> when (part) {
+                            is Fb2Part.Text -> text += blockText(part.block)
+                            is Fb2Part.Child -> { flush(); append(part.chapter) }
+                        } }
+                        flush()
+                    }
                 }
                 parsed.chapters.forEach(::append)
                 require(sections.isNotEmpty()) { "В книге нет доступного текста" }

@@ -14,6 +14,8 @@ import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 
 private fun Context.activity(): Activity? = when (this) {
     is Activity -> this
@@ -29,6 +31,18 @@ private class Chrome(private val background: Color) {
     fun remove(key: Any) { requests.remove(key); refresh() }
     private fun refresh() { colors = requests.values.lastOrNull() ?: (background to background) }
 }
+private val LocalFullscreen = staticCompositionLocalOf<MutableState<Boolean>?> { null }
+
+@Composable
+fun SystemSafePadding(): Modifier = if (LocalFullscreen.current?.value == true)
+    Modifier.windowInsetsPadding(WindowInsets.displayCutout) else Modifier.safeDrawingPadding()
+
+@Composable
+fun ReaderFullscreen(enabled: Boolean) {
+    val state = LocalFullscreen.current ?: return
+    DisposableEffect(state, enabled) { state.value = enabled; onDispose { state.value = false } }
+}
+
 private val LocalChrome = staticCompositionLocalOf<Chrome?> { null }
 
 /** Paint inset areas as well as the bars: Android edge-to-edge bars can be transparent. */
@@ -36,6 +50,7 @@ private val LocalChrome = staticCompositionLocalOf<Chrome?> { null }
 fun SystemChrome(content: @Composable () -> Unit) {
     val background = MaterialTheme.colorScheme.background
     val chrome = remember(background) { Chrome(background) }
+    val fullscreen = remember { mutableStateOf(false) }
     val view = LocalView.current
     val activity = view.context.activity()
     val (status, navigation) = chrome.colors
@@ -46,6 +61,9 @@ fun SystemChrome(content: @Composable () -> Unit) {
             WindowCompat.getInsetsController(window, view).apply {
                 isAppearanceLightStatusBars = status.luminance() > .5f
                 isAppearanceLightNavigationBars = navigation.luminance() > .5f
+                systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+                if (fullscreen.value) hide(WindowInsetsCompat.Type.systemBars())
+                else show(WindowInsetsCompat.Type.systemBars())
             }
             if (android.os.Build.VERSION.SDK_INT >= 29) {
                 window.isStatusBarContrastEnforced = false
@@ -53,10 +71,10 @@ fun SystemChrome(content: @Composable () -> Unit) {
             }
         }
     }
-    CompositionLocalProvider(LocalChrome provides chrome) {
+    CompositionLocalProvider(LocalChrome provides chrome, LocalFullscreen provides fullscreen) {
         Box(Modifier.fillMaxSize().background(status)) {
             content()
-            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
+            if (!fullscreen.value) Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth()
                 .windowInsetsBottomHeight(WindowInsets.navigationBars).background(navigation))
         }
     }

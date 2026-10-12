@@ -1,6 +1,7 @@
 package com.example.bookera.data.local
 
 import android.content.Context
+import java.time.LocalDate
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
@@ -12,11 +13,17 @@ class LocalSettings(context: Context) {
     private val prefs = context.applicationContext.getSharedPreferences("bookera_settings", Context.MODE_PRIVATE)
     private val _name = MutableStateFlow(prefs.getString("name", "Читатель") ?: "Читатель")
     val name = _name.asStateFlow()
-    private val defaults = setOf("openlibrary", "flibusta", "gutenberg", "googlebooks", "archive", "wikisource")
+    private val defaults = setOf("openlibrary", "flibusta", "gutenberg", "googlebooks", "archive", "wikisource", "gutenberg-opds")
     init {
         if (!prefs.getBoolean("catalogs_v2", false)) {
             prefs.edit().putStringSet("sources", prefs.getStringSet("sources", defaults).orEmpty() +
                 setOf("gutenberg", "googlebooks", "archive", "wikisource")).putBoolean("catalogs_v2", true).apply()
+        }
+    }
+    init {
+        if (!prefs.getBoolean("catalogs_v3", false)) {
+            prefs.edit().putStringSet("sources", prefs.getStringSet("sources", defaults).orEmpty() + "gutenberg-opds")
+                .putBoolean("catalogs_v3", true).apply()
         }
     }
     private val _enabled = MutableStateFlow(prefs.getStringSet("sources", defaults).orEmpty().toSet())
@@ -26,11 +33,26 @@ class LocalSettings(context: Context) {
     private val _theme = MutableStateFlow(prefs.getString("theme", "system") ?: "system")
     val theme = _theme.asStateFlow()
 
+    private val _birthday = MutableStateFlow(prefs.getString("birthday", "").orEmpty())
+    val birthday = _birthday.asStateFlow()
+    private val _email = MutableStateFlow(prefs.getString("email", "").orEmpty())
+    val email = _email.asStateFlow()
+
+    fun updateProfile(name: String, birthday: LocalDate?, email: String) {
+        require(name.trim().isNotEmpty() && name.trim().length <= 40) { "Укажите имя до 40 символов" }
+        require(birthday == null || birthday <= LocalDate.now()) { "Дата рождения не может быть в будущем" }
+        require(email.isBlank() || Regex("^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$").matches(email.trim())) { "Проверьте адрес почты" }
+        _name.value = name.trim(); _birthday.value = birthday?.toString().orEmpty(); _email.value = email.trim()
+        prefs.edit().putString("name", _name.value).putString("birthday", _birthday.value).putString("email", _email.value).apply()
+    }
+
     private val listener = android.content.SharedPreferences.OnSharedPreferenceChangeListener { _, key ->
         when (key) {
             "sources" -> _enabled.value = prefs.getStringSet("sources", defaults).orEmpty().toSet()
             "last_read" -> _lastRead.value = prefs.getLong("last_read", 0L)
             "theme" -> _theme.value = prefs.getString("theme", "system") ?: "system"
+            "birthday" -> _birthday.value = prefs.getString("birthday", "").orEmpty()
+            "email" -> _email.value = prefs.getString("email", "").orEmpty()
             "name" -> _name.value = prefs.getString("name", "Читатель") ?: "Читатель"
         }
     }

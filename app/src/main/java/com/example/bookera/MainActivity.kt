@@ -49,7 +49,7 @@ class MainActivity : ComponentActivity() {
             BookERATheme(darkTheme = dark) {
                 com.example.bookera.ui.theme.SystemChrome {
                     Surface(
-                        modifier = Modifier.fillMaxSize().safeDrawingPadding(),
+                        modifier = Modifier.fillMaxSize().then(com.example.bookera.ui.theme.SystemSafePadding()),
                         color = MaterialTheme.colorScheme.background
                     ) {
                         val navController = rememberNavController()

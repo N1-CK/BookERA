@@ -28,9 +28,14 @@ class Fb2Parser {
          *
          * Поэтому сначала нормализуем XML.
          */
-        val xml = FileInputStream(file).use { input ->
-            input.bufferedReader(Charsets.UTF_8).readText()
+        require(file.length() <= 80L * 1024 * 1024) { "FB2 больше 80 МБ" }
+        val header = file.inputStream().use { input ->
+            val buffer = ByteArray(512); val n = input.read(buffer)
+            if (n > 0) String(buffer, 0, n, Charsets.ISO_8859_1) else ""
         }
+        val encoding = Regex("encoding=[\"']([^\"']+)", RegexOption.IGNORE_CASE).find(header)?.groupValues?.get(1)
+        val charset = runCatching { java.nio.charset.Charset.forName(encoding ?: when { header.startsWith("\u00FF\u00FE") -> "UTF-16LE"; header.startsWith("\u00FE\u00FF") -> "UTF-16BE"; else -> "UTF-8" }) }.getOrDefault(Charsets.UTF_8)
+        val xml = FileInputStream(file).use { input -> input.bufferedReader(charset).readText().removePrefix("\uFEFF") }
 
         val fixedXml = sanitizeXml(xml)
 
@@ -224,36 +229,29 @@ class Fb2Parser {
         )
     }
 
-    private fun parseBody(
-        parser: XmlPullParser
-    ): List<Fb2Chapter> {
-
-        val result =
-            mutableListOf<Fb2Chapter>()
-
-        while (
-            parser.next() != XmlPullParser.END_DOCUMENT
-        ) {
-
-            if (
-                parser.eventType ==
-                XmlPullParser.END_TAG &&
-                parser.name == "body"
-            ) {
-                break
-            }
-
-            if (
-                parser.eventType ==
-                XmlPullParser.START_TAG &&
-                parser.name == "section"
-            ) {
-
-                result +=
-                    parseSection(parser)
+    private fun parseBody(parser: XmlPullParser): List<Fb2Chapter> {
+        val result = mutableListOf<Fb2Chapter>()
+        val blocks = mutableListOf<Fb2Block>()
+        var title: String? = null
+        fun flush() {
+            if (blocks.isNotEmpty()) result += Fb2Chapter(null, title, blocks.toList())
+            blocks.clear()
+        }
+        while (parser.next() != XmlPullParser.END_DOCUMENT) {
+            if (parser.eventType == XmlPullParser.END_TAG && parser.name == "body") break
+            if (parser.eventType != XmlPullParser.START_TAG) continue
+            when (parser.name) {
+                "section" -> { flush(); result += parseSection(parser) }
+                "title" -> { title = readTitle(parser); if (!title.isNullOrBlank()) blocks += Fb2Block.SectionTitle(title!!) }
+                "p" -> readElementText(parser).takeIf { it.isNotBlank() }?.let { blocks += Fb2Block.Paragraph(it) }
+                "subtitle" -> readElementText(parser).takeIf { it.isNotBlank() }?.let { blocks += Fb2Block.Subtitle(it) }
+                "epigraph" -> readElementText(parser).takeIf { it.isNotBlank() }?.let { blocks += Fb2Block.Epigraph(it) }
+                "poem" -> blocks += parsePoem(parser)
+                "image" -> getImageId(parser)?.let { blocks += Fb2Block.Image(it) }
+                "empty-line" -> { blocks += Fb2Block.EmptyLine(); skipCurrentElement(parser) }
             }
         }
-
+        flush()
         return result
     }
 
@@ -271,6 +269,9 @@ class Fb2Parser {
 
         val blocks =
             mutableListOf<Fb2Block>()
+
+        val content = mutableListOf<Fb2Part>()
+        fun addBlock(block: Fb2Block) { blocks.add(block); content += Fb2Part.Text(block) }
 
         val children =
             mutableListOf<Fb2Chapter>()
@@ -303,7 +304,7 @@ class Fb2Parser {
 
                     if (!title.isNullOrBlank()) {
 
-                        blocks.add(
+                        addBlock(
                             Fb2Block.SectionTitle(
                                 title
                             )
@@ -318,7 +319,7 @@ class Fb2Parser {
 
                     if (text.isNotBlank()) {
 
-                        blocks.add(
+                        addBlock(
                             Fb2Block.Paragraph(text)
                         )
                     }
@@ -331,7 +332,7 @@ class Fb2Parser {
 
                     if (text.isNotBlank()) {
 
-                        blocks.add(
+                        addBlock(
                             Fb2Block.Subtitle(text)
                         )
                     }
@@ -344,7 +345,7 @@ class Fb2Parser {
 
                     if (text.isNotBlank()) {
 
-                        blocks.add(
+                        addBlock(
                             Fb2Block.Epigraph(text)
                         )
                     }
@@ -352,7 +353,7 @@ class Fb2Parser {
 
                 "poem" -> {
 
-                    blocks.add(
+                    addBlock(
                         parsePoem(parser)
                     )
                 }
@@ -364,7 +365,7 @@ class Fb2Parser {
 
                     if (imageId != null) {
 
-                        blocks.add(
+                        addBlock(
                             Fb2Block.Image(imageId)
                         )
                     }
@@ -372,7 +373,7 @@ class Fb2Parser {
 
                 "empty-line" -> {
 
-                    blocks.add(
+                    addBlock(
                         Fb2Block.EmptyLine()
                     )
 
@@ -381,9 +382,9 @@ class Fb2Parser {
 
                 "section" -> {
 
-                    children.add(
-                        parseSection(parser)
-                    )
+                    val child = parseSection(parser)
+                    children.add(child)
+                    content += Fb2Part.Child(child)
                 }
             }
         }
@@ -392,7 +393,8 @@ class Fb2Parser {
             id = id,
             title = title,
             blocks = blocks,
-            children = children
+            children = children,
+            content = content
         )
     }
 
@@ -575,12 +577,12 @@ class Fb2Parser {
                 }
 
                 XmlPullParser.START_TAG -> {
-
+                    if (parser.name in setOf("p", "v", "subtitle") && result.isNotEmpty()) result.append(' ')
                     depth++
                 }
 
                 XmlPullParser.END_TAG -> {
-
+                    if (parser.name in setOf("p", "v", "subtitle")) result.append(' ')
                     depth--
                 }
             }

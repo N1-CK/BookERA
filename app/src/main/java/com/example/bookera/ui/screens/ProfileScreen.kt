@@ -35,6 +35,11 @@ fun ProfileScreen(
     onOpenBook: (Long) -> Unit, onSetRead: (Long, Boolean) -> Unit,
     settings: LocalSettings, notes: List<ReaderNote>, onOpenNote: (ReaderNote) -> Unit, onDeleteNote: (ReaderNote) -> Unit
 ) {
+    val name by settings.name.collectAsState()
+    val birthday by settings.birthday.collectAsState()
+    val email by settings.email.collectAsState()
+    var editing by remember { mutableStateOf(false) }
+    if (editing) ProfileEditor(settings) { editing = false }
     val theme by settings.theme.collectAsState()
     var showNotes by rememberSaveable { mutableStateOf(false) }
     var quotesOnly by rememberSaveable { mutableStateOf(false) }
@@ -114,15 +119,19 @@ fun ProfileScreen(
         } else {
             Text("Моё пространство", style = MaterialTheme.typography.headlineLarge, color = profileInk, fontWeight = FontWeight.SemiBold)
             Spacer(Modifier.height(24.dp))
-            Card(shape = RoundedCornerShape(28.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
+            Card(Modifier.clickable { editing = true }, shape = RoundedCornerShape(24.dp), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)) {
                 Row(Modifier.fillMaxWidth().padding(22.dp), verticalAlignment = Alignment.CenterVertically) {
                     Box(Modifier.size(60.dp).background(MaterialTheme.colorScheme.primary, CircleShape), contentAlignment = Alignment.Center) {
-                        Text("B", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.headlineMedium)
+                        Text(name.firstOrNull()?.uppercaseChar()?.toString() ?: "B", color = MaterialTheme.colorScheme.onPrimary, style = MaterialTheme.typography.headlineMedium)
                     }
                     Spacer(Modifier.width(16.dp))
-                    Column {
-                        Text("Читатель BookERA", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.titleLarge)
-                        Text("Книги и прогресс хранятся на устройстве", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall)
+                    Column(Modifier.weight(1f)) {
+                        Text(name, color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.titleLarge)
+                        if (email.isNotBlank()) Text(email, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall)
+                        runCatching { java.time.LocalDate.parse(birthday) }.getOrNull()?.let { date -> Text(date.format(java.time.format.DateTimeFormatter.ofPattern("dd.MM.yyyy")),
+                            color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall) }
+                        Text("Изменить профиль →", color = MaterialTheme.colorScheme.onPrimaryContainer, style = MaterialTheme.typography.bodySmall)
                     }
                 }
             }

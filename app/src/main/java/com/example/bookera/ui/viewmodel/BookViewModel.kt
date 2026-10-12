@@ -11,6 +11,7 @@ import com.example.bookera.data.local.repository.BookRepository
 import com.example.bookera.data.plugin.BookSearchResult
 import com.example.bookera.data.plugin.DownloadPlugin
 import com.example.bookera.data.plugin.SourceStatus
+import com.example.bookera.data.plugin.AuthorSearchResult
 import com.example.bookera.data.plugin.DownloadLink
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
@@ -53,6 +54,8 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
     private val _availablePlugins = MutableStateFlow<List<DownloadPlugin>>(emptyList())
     val availablePlugins: StateFlow<List<DownloadPlugin>> = _availablePlugins.asStateFlow()
 
+    private val _authors = MutableStateFlow<List<AuthorSearchResult>>(emptyList())
+    val authors = _authors.asStateFlow()
     private val _sourceStatuses = MutableStateFlow<List<SourceStatus>>(emptyList())
     val sourceStatuses = _sourceStatuses.asStateFlow()
     private val readerManager by lazy { ReaderManager() }
@@ -122,6 +125,7 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
         searchJob?.cancel()
         _searchResults.value = emptyList()
         _sourceStatuses.value = emptyList()
+        _authors.value = emptyList()
         _isLoading.value = options.isActive
         _error.value = null
         if (options.isActive) {
@@ -133,6 +137,7 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
                     repository.searchWithPlugins(options) { snapshot ->
                         if (_searchOptions.value == options) {
                             _searchResults.value = snapshot.books
+                            _authors.value = snapshot.authors
                             _sourceStatuses.value = snapshot.statuses
                         }
                     }.getOrThrow()
@@ -151,6 +156,8 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
         }
     }
 
+    suspend fun booksByAuthor(author: AuthorSearchResult) = repository.booksByAuthor(author)
+
     suspend fun downloadLinks(book: Book): Pair<String, List<DownloadLink>>? = repository.downloadLinks(book)
     suspend fun findEditions(title: String): List<BookSearchResult> = repository.searchWithPlugins(BookSearchQuery(text = title)).getOrThrow()
     fun retrySearch() { repository.retryUnavailable(); applySearch(_searchOptions.value) }
@@ -159,6 +166,8 @@ class BookViewModel(private val repository: BookRepository) : ViewModel() {
     fun importBook(uri: Uri, onComplete: (Result<Book>) -> Unit) {
         viewModelScope.launch { onComplete(repository.importBook(uri)) }
     }
+
+    suspend fun resolveVisibleCover(book: Book) = repository.resolveCover(book)
 
     fun resolveCover(book: Book) {
         viewModelScope.launch { repository.resolveCover(book) }

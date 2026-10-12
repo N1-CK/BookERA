@@ -29,6 +29,9 @@ object Routes {
     const val BOOK_LIST = "book_list"
     const val BOOK_DETAIL = "book_detail/{bookId}"
 
+    const val AUTHOR = "author/{pluginId}/{authorId}?name={name}&url={url}"
+    fun author(author: com.example.bookera.data.plugin.AuthorSearchResult) =
+        "author/${android.net.Uri.encode(author.pluginId)}/${android.net.Uri.encode(author.id)}?name=${android.net.Uri.encode(author.name)}&url=${android.net.Uri.encode(author.url)}"
     const val READER = "reader/{bookId}"
 
     fun bookDetail(bookId: Long) = "book_detail/$bookId"
@@ -52,6 +55,17 @@ fun BookNavGraph(
                 navController = navController,
                 settings = settings
             )
+        }
+
+        composable(Routes.AUTHOR, arguments = listOf(
+            navArgument("pluginId") { type = NavType.StringType }, navArgument("authorId") { type = NavType.StringType },
+            navArgument("name") { type = NavType.StringType }, navArgument("url") { type = NavType.StringType }
+        )) { entry ->
+            val args = entry.arguments ?: return@composable
+            val author = com.example.bookera.data.plugin.AuthorSearchResult(args.getString("authorId").orEmpty(),
+                args.getString("name").orEmpty(), args.getString("url").orEmpty(), args.getString("pluginId").orEmpty())
+            com.example.bookera.ui.screens.AuthorBooksScreen(author, viewModel, onBack = { navController.popBackStack() },
+                onOpen = { navController.navigate(Routes.bookDetail(it)) })
         }
 
         composable(
